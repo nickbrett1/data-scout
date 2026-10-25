@@ -5,6 +5,17 @@
 # Stage 1 (build): copies the full source tree, installs dependencies and
 # builds the application. Stage 2 (runtime): copies only the build output /
 # virtualenv and production dependencies, keeping the final image small.
+#
+# LOCAL EDITS (not regenerable — re-apply after an `overwrite: true` run):
+#   1. apt tiers: `libimage-exiftool-perl` is the Debian package that ships
+#      /usr/bin/exiftool. `libexiftool-perl` DOES NOT EXIST (E: Unable to
+#      locate package) and failed the first published build.
+#   2. A non-root runtime user at uid/gid 1000. The workspace bind is
+#      /srv/data-scout/workspace:/workspace, owned 1000:1000 and restored by
+#      restic as 1000:1000, so a root container writes root-owned notebooks
+#      and findings.jsonl into it and the next host-side read/restore breaks.
+#      HOME is set because nbconvert's kernel writes caches (XDG, matplotlib,
+#      ipykernel runtime dir) somewhere and / is not writable for uid 1000.
 
 
 FROM python:3.12-slim AS build
@@ -26,11 +37,32 @@ WORKDIR /app
 # the package to nickbrett1/data-scout so it inherits the
 # repo's access (public repo -> public package; no manual visibility step).
 LABEL org.opencontainers.image.source=https://github.com/nickbrett1/data-scout
-RUN apt-get update && apt-get install -y --no-install-recommends poppler-utils libmagic1 file libexiftool-perl \
+
+# Tier-0 belt: poppler-utils (pdfinfo/pdffonts/pdfimages), libmagic1 (the
+# library) AND file (the CLI - libmagic1 alone does not ship /usr/bin/file),
+# libimage-exiftool-perl (exiftool).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        poppler-utils \
+        libmagic1 \
+        file \
+        libimage-exiftool-perl \
     && rm -rf /var/lib/apt/lists/*
-ENV PATH="/opt/venv/bin:$PATH"
+
+# Runtime identity must match the workspace bind's owner (1000:1000).
+RUN groupadd --gid 1000 app \
+    && useradd --uid 1000 --gid 1000 --create-home --shell /bin/bash app
+
+ENV PATH="/opt/venv/bin:$PATH" \
+    HOME="/home/app" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DATA_SCOUT_CORPORA_ROOT="/corpora"
+
 COPY --from=build /opt/venv /opt/venv
 COPY . .
+
+RUN chown -R app:app /app /home/app
+USER app
 EXPOSE 8710
 
 
