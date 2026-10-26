@@ -54,6 +54,23 @@ DEFAULT_PORT = 8710
 
 _SERVABLE_RE = re.compile(r"^(report|session)-[A-Za-z0-9._-]*\.html$")
 
+# Named routes rather than a static directory: three known files, no path input.
+_ICONS = {
+    "/apple-touch-icon.png": "apple-touch-icon.png",
+    "/apple-touch-icon-precomposed.png": "apple-touch-icon.png",
+    "/icon-512.png": "icon-512.png",
+    "/favicon.ico": "favicon-32.png",
+    "/favicon-32.png": "favicon-32.png",
+}
+
+
+def asset_path(filename: str) -> Path:
+    """The icon files, from the installed package rather than from a working tree."""
+    from importlib.resources import files
+
+    resource = files("data_scout") / "assets" / filename
+    return Path(str(resource))
+
 _A2A_DETAIL = (
     "The A2A listener is deploy-time wiring, not repo work. The correct card URL is "
     "the container's name on the shared network (an address is a fact about an "
@@ -109,6 +126,15 @@ def index_html(payload: dict[str, Any]) -> str:
     parts = [
         "<!DOCTYPE html><html lang=en><head><meta charset=utf-8>",
         '<meta name=viewport content="width=device-width, initial-scale=1">',
+        # The home-screen contract: iOS reads apple-touch-icon for the bookmark
+        # tile and apple-mobile-web-app-title for its caption, so the caption is
+        # "data-scout" and the page title stays descriptive.
+        '<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">',
+        '<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">',
+        '<link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">',
+        '<meta name="theme-color" content="#1b1d22">',
+        '<meta name="apple-mobile-web-app-title" content="data-scout">',
+        '<meta name="apple-mobile-web-app-capable" content="yes">',
         "<title>data-scout reports</title><style>",
         _INDEX_CSS,
         "</style></head><body><h1>data-scout reports</h1>",
@@ -193,6 +219,13 @@ def artifact(request: Request) -> Response:
     return FileResponse(found, media_type="text/html; charset=utf-8")
 
 
+def icon(request: Request) -> Response:
+    filename = _ICONS.get(request.url.path)
+    if filename is None:
+        return _json({"error": "not_found", "path": request.url.path}, status=404)
+    return FileResponse(asset_path(filename), media_type="image/png")
+
+
 def build_app() -> Starlette:
     """The one app: MCP at ``/mcp``, reports under ``/report/``, on one port.
 
@@ -217,6 +250,7 @@ def build_app() -> Starlette:
             Route("/report", index_page),
             Route("/report/", index_page),
             Route("/a2a", a2a),
+            *[Route(path, icon) for path in _ICONS],
             Route("/report/{corpus_id}/{filename}", artifact),
         ]
     )

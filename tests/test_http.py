@@ -53,7 +53,7 @@ def request(port: int, path: str, method: str = "GET", body: str | None = None, 
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     connection.request(method, path, body=body, headers=headers or {})
     response = connection.getresponse()
-    payload = response.read().decode("utf-8")
+    payload = response.read()
     content_type = response.getheader("Content-Type", "")
     status = response.status
     connection.close()
@@ -61,7 +61,9 @@ def request(port: int, path: str, method: str = "GET", body: str | None = None, 
 
 
 def get(port: int, path: str) -> tuple[int, str, str]:
-    return request(port, path)
+    """Text-typed helper: most routes here are HTML or JSON."""
+    status, content_type, payload = request(port, path)
+    return status, content_type, payload.decode("utf-8")
 
 
 def test_healthz_reports_the_two_resolved_roots_and_the_belt(server, roots):
@@ -103,7 +105,7 @@ def test_a_head_request_has_no_body(server):
     status, content_type, body = request(server, "/healthz", method="HEAD")
     assert status == 200
     assert "application/json" in content_type
-    assert body == ""
+    assert body == b""
 
 
 def test_the_ledger_is_not_servable_even_from_the_right_corpus(server):
@@ -151,3 +153,24 @@ def test_the_app_never_writes(corpus_workspace):
             modes = [arg.value for arg in node.args if isinstance(arg, ast.Constant)]
             assert "w" not in modes and "a" not in modes
     _ = workspace  # imported for its env contract only
+
+
+def test_the_home_screen_icon_is_served_as_a_png(server):
+    """iOS fetches this path for an Add-to-Home-Screen tile, and only accepts an image."""
+    for path in ("/apple-touch-icon.png", "/apple-touch-icon-precomposed.png", "/icon-512.png"):
+        status, content_type, body = request(server, path)
+        assert status == 200, path
+        assert content_type == "image/png", path
+        assert body[:8] == b"\x89PNG\r\n\x1a\n", path
+
+
+def test_the_index_declares_the_icon_and_a_short_caption(server):
+    status, _content_type, body = get(server, "/")
+    assert status == 200
+    assert '<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">' in body
+    assert 'name="apple-mobile-web-app-title" content="data-scout"' in body
+    assert 'name="theme-color" content="#1b1d22"' in body
+
+
+def test_an_unknown_asset_path_is_404(server):
+    assert get(server, "/icon-999.png")[0] == 404
