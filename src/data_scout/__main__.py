@@ -1,11 +1,16 @@
-"""The HTTP app: frozen reports on one port, and a documented ``/a2a`` seam.
+"""The HTTP app: the MCP façade, the frozen reports, and a documented ``/a2a`` seam.
 
 One container, one published port, path-routed — because a second published port
 would be a second service (``data-scout-genproj-scaffold`` §6.2):
 
+``/mcp``
+    The belt as an MCP tool server (``data_scout.mcp_server``), so an agent — or
+    Open WebUI through MCPHub — calls the same functions the notebooks call.
+    Same port, same process: the façade is generated from the registry, not
+    deployed beside it.
 ``/healthz``
-    Liveness plus the two resolved roots, so a misconfigured mount is visible
-    without opening a shell.
+    Liveness plus the two resolved roots and the belt size, so a misconfigured
+    mount is visible without opening a shell.
 ``/`` and ``/report/``
     The reports index: every corpus workspace and its frozen artifacts.
 ``/report/<corpus>/<file>.html``
@@ -18,23 +23,29 @@ would be a second service (``data-scout-genproj-scaffold`` §6.2):
     **Deliberately unimplemented.** The A2A listener is deploy-time wiring and
     the dial address is a fact about an observer, not about this service
     (``data-scout-convention`` §7). Do not write an agent loop here: the
-    intelligence is a goose recipe driving these tools (design §2.1).
+    intelligence is a goose recipe driving these tools (design §2.1). The belt is
+    reachable as tools, which is what a recipe needs and what an A2A card would
+    only front.
 
-This serves the frozen artifacts and nothing else. It never writes, and it never
-touches the corpora root.
+This serves the frozen artifacts and the tools. It never writes to the corpora
+root, and the only thing that ever writes at all is ``findings_append``, into the
+workspace it already owns.
 """
 
 from __future__ import annotations
 
-import json
 import os
 import re
-from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from data_scout import __version__, workspace
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from starlette.routing import Route
+
+from data_scout import __version__, registry, workspace
+from data_scout.mcp_server import MCP_PATH, build_server
 
 HOST_ENV = "DATA_SCOUT_HTTP_HOST"
 PORT_ENV = "DATA_SCOUT_HTTP_PORT"
@@ -42,6 +53,14 @@ DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8710
 
 _SERVABLE_RE = re.compile(r"^(report|session)-[A-Za-z0-9._-]*\.html$")
+
+_A2A_DETAIL = (
+    "The A2A listener is deploy-time wiring, not repo work. The correct card URL is "
+    "the container's name on the shared network (an address is a fact about an "
+    "observer, not about a service). The intelligence is a goose recipe driving these "
+    f"tools, and the tools are served as MCP at {MCP_PATH} — that is the surface to "
+    f"attach to. A card pointing here would list green and fail every turn."
+)
 
 _INDEX_CSS = """
 body{margin:0 auto;padding:1.6rem 1.1rem;max-width:38em;color:#1b1b1b;background:#fdfdfc;
@@ -133,75 +152,76 @@ def resolve_artifact(path: str) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
-class Handler(BaseHTTPRequestHandler):
-    server_version = f"data-scout/{__version__}"
-    protocol_version = "HTTP/1.1"
+def _json(payload: dict[str, Any], status: int = 200) -> JSONResponse:
+    return JSONResponse(payload, status_code=status, headers={"Cache-Control": "no-store"})
 
-    def do_GET(self) -> None:  # noqa: N802 - http.server's spelling
-        route = self.path.split("?", 1)[0].rstrip("/") or "/"
 
-        if route == "/healthz":
-            self._json(HTTPStatus.OK, {"status": "ok", "version": __version__, **index_payload()})
-            return
-        if route == "/report/index.json" or route == "/index.json":
-            self._json(HTTPStatus.OK, index_payload())
-            return
-        if route in {"/", "/report"}:
-            self._text(HTTPStatus.OK, index_html(index_payload()), "text/html; charset=utf-8")
-            return
-        if route.startswith("/a2a"):
-            self._json(
-                HTTPStatus.NOT_IMPLEMENTED,
-                {
-                    "error": "not_implemented",
-                    "detail": (
-                        "The A2A listener is deploy-time wiring, not repo work. The "
-                        "correct card URL is the container's name on the shared "
-                        "network (an address is a fact about an observer, not about "
-                        "a service). The intelligence is a goose recipe driving these "
-                        "tools, not a hand-written agent loop."
-                    ),
-                },
-            )
-            return
+def healthz(request: Request) -> Response:
+    del request
+    return _json(
+        {
+            "status": "ok",
+            "version": __version__,
+            "mcp": MCP_PATH,
+            "belt": {"size": len(registry.BELT), "cap": registry.MAX_BELT_SIZE},
+            **index_payload(),
+        }
+    )
 
-        artifact = resolve_artifact(route)
-        if artifact is not None:
-            self._file(artifact)
-            return
-        self._json(HTTPStatus.NOT_FOUND, {"error": "not_found", "path": route})
 
-    def do_HEAD(self) -> None:  # noqa: N802
-        self.do_GET()
+def index_json(request: Request) -> Response:
+    del request
+    return _json(index_payload())
 
-    def _json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
-        self._text(status, json.dumps(payload, indent=2, sort_keys=True), "application/json; charset=utf-8")
 
-    def _text(self, status: HTTPStatus, body: str, content_type: str) -> None:
-        data = body.encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        if self.command != "HEAD":
-            self.wfile.write(data)
+def index_page(request: Request) -> Response:
+    del request
+    return HTMLResponse(index_html(index_payload()), headers={"Cache-Control": "no-store"})
 
-    def _file(self, path: Path) -> None:
-        try:
-            data = path.read_bytes()
-        except OSError:
-            self._json(HTTPStatus.NOT_FOUND, {"error": "not_found", "path": str(path)})
-            return
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        if self.command != "HEAD":
-            self.wfile.write(data)
 
-    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 - base signature
-        print(f"[data-scout] {self.address_string()} {format % args}", flush=True)
+def a2a(request: Request) -> Response:
+    del request
+    return _json({"error": "not_implemented", "detail": _A2A_DETAIL}, status=501)
+
+
+def artifact(request: Request) -> Response:
+    corpus_id = request.path_params["corpus_id"]
+    filename = request.path_params["filename"]
+    found = resolve_artifact(f"/report/{corpus_id}/{filename}")
+    if found is None:
+        return _json({"error": "not_found", "path": request.url.path}, status=404)
+    return FileResponse(found, media_type="text/html; charset=utf-8")
+
+
+def build_app() -> Starlette:
+    """The one app: MCP at ``/mcp``, reports under ``/report/``, on one port.
+
+    The MCP routes are mounted first, so ``/mcp`` is the server's own handler and
+    never falls through to the report routes. DNS-rebinding protection is off
+    because this is dialed by container name on an internal network
+    (``http://data-scout:8710/mcp``); the transport is not exposed publicly.
+    """
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    server = build_server()
+    app = server.streamable_http_app(
+        streamable_http_path=MCP_PATH,
+        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+    )
+    app.router.routes.extend(
+        [
+            Route("/healthz", healthz),
+            Route("/report/index.json", index_json),
+            Route("/index.json", index_json),
+            Route("/", index_page),
+            Route("/report", index_page),
+            Route("/report/", index_page),
+            Route("/a2a", a2a),
+            Route("/report/{corpus_id}/{filename}", artifact),
+        ]
+    )
+    app.router.redirect_slashes = False
+    return app
 
 
 def _count_lines(path: Path) -> int:
@@ -220,27 +240,24 @@ def main(argv: list[str] | None = None) -> int:
     """Entry point for ``python -m data_scout``: serve, and take no arguments.
 
     The container's command is this module, so the process that runs in the
-    image is the same one the report route belongs to — one container, one port.
+    image is the same one both routes belong to — one container, one port.
     """
     del argv  # accepted so a future flag does not change the contract
     return serve()
 
 
 def serve(host: str | None = None, port: int | None = None) -> int:
+    import uvicorn
+
     host = host or os.environ.get(HOST_ENV, DEFAULT_HOST)
     port = port or int(os.environ.get(PORT_ENV, DEFAULT_PORT))
-    httpd = ThreadingHTTPServer((host, port), Handler)
     print(
         f"data-scout {__version__} serving on http://{host}:{port} "
-        f"(workspace={workspace.workspace_root()}, corpora={workspace.corpora_root()})",
+        f"(mcp={MCP_PATH}, belt={len(registry.BELT)}, workspace={workspace.workspace_root()}, "
+        f"corpora={workspace.corpora_root()})",
         flush=True,
     )
-    try:
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        httpd.server_close()
+    uvicorn.run(build_app(), host=host, port=port, log_level="info")
     return 0
 
 

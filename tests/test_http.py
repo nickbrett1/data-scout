@@ -1,49 +1,70 @@
-"""One port, two routes: the frozen artifacts and a health endpoint.
+"""One port, four surfaces: the MCP façade, the reports, health, and the /a2a seam.
 
-``/a2a`` stays a documented seam — serving it is deploy-time wiring, and the
-intelligence is a recipe, not a hand-written agent loop.
+Written against a real socket rather than a test client on purpose: the encoded
+traversal case (``%2e%2e%2f``) is refused *by the router*, and a client that
+normalises paths before sending would make that test assert nothing.
 """
 
 from __future__ import annotations
 
 import http.client
 import json
+import socket
 import threading
-from http.server import ThreadingHTTPServer
+import time
 
 import pytest
 
 from data_scout import __main__ as app
-from data_scout import workspace
+from data_scout import registry, workspace
 
 CORPUS_ID = "demo-corpus"
 
 
 @pytest.fixture
 def server(corpus_workspace):
+    import uvicorn
+
     (corpus_workspace / "report-2026-10-26.html").write_text("<html>report</html>", encoding="utf-8")
     (corpus_workspace / "findings.jsonl").write_text('{"a":1}\n{"b":2}\n', encoding="utf-8")
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), app.Handler)
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+
+    sock = socket.socket()
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(128)
+    port = sock.getsockname()[1]
+    config = uvicorn.Config(app.build_app(), log_level="warning", lifespan="on")
+    httpd = uvicorn.Server(config)
+    thread = threading.Thread(target=httpd.run, kwargs={"sockets": [sock]}, daemon=True)
     thread.start()
+    for _ in range(500):
+        if httpd.started:
+            break
+        time.sleep(0.02)
     try:
-        yield httpd.server_address[1]
+        yield port
     finally:
-        httpd.shutdown()
-        httpd.server_close()
+        httpd.should_exit = True
+        thread.join(timeout=10)
+        sock.close()
+
+
+def request(port: int, path: str, method: str = "GET", body: str | None = None, headers: dict | None = None):
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    connection.request(method, path, body=body, headers=headers or {})
+    response = connection.getresponse()
+    payload = response.read().decode("utf-8")
+    content_type = response.getheader("Content-Type", "")
+    status = response.status
+    connection.close()
+    return status, content_type, payload
 
 
 def get(port: int, path: str) -> tuple[int, str, str]:
-    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-    connection.request("GET", path)
-    response = connection.getresponse()
-    body = response.read().decode("utf-8")
-    content_type = response.getheader("Content-Type", "")
-    connection.close()
-    return response.status, content_type, body
+    return request(port, path)
 
 
-def test_healthz_reports_the_two_resolved_roots(server, roots):
+def test_healthz_reports_the_two_resolved_roots_and_the_belt(server, roots):
     status, content_type, body = get(server, "/healthz")
     assert status == 200
     assert "application/json" in content_type
@@ -51,6 +72,8 @@ def test_healthz_reports_the_two_resolved_roots(server, roots):
     assert payload["status"] == "ok"
     assert payload["workspace"] == str(roots.workspace)
     assert payload["corpora_root"] == str(roots.corpora)
+    assert payload["mcp"] == "/mcp"
+    assert payload["belt"] == {"size": 15, "cap": registry.MAX_BELT_SIZE}
 
 
 def test_the_index_lists_the_frozen_artifacts(server):
@@ -74,6 +97,13 @@ def test_a_frozen_artifact_is_served(server):
     assert status == 200
     assert content_type.startswith("text/html")
     assert body == "<html>report</html>"
+
+
+def test_a_head_request_has_no_body(server):
+    status, content_type, body = request(server, "/healthz", method="HEAD")
+    assert status == 200
+    assert "application/json" in content_type
+    assert body == ""
 
 
 def test_the_ledger_is_not_servable_even_from_the_right_corpus(server):
@@ -101,6 +131,8 @@ def test_the_a2a_route_is_a_documented_seam_not_an_agent_loop(server):
     payload = json.loads(body)
     assert payload["error"] == "not_implemented"
     assert "recipe" in payload["detail"]
+    # And it names the surface that *is* implemented, so the seam is actionable.
+    assert "/mcp" in payload["detail"]
 
 
 def test_resolve_artifact_rejects_an_invalid_corpus_id():

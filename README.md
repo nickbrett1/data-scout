@@ -165,7 +165,35 @@ report-render <corpus-id>          # in the dev environment, after `pip install 
 ```
 
 The frozen artifacts are served on the single published port: `/report/…` (HTML) and
-`/healthz`. `/a2a` is a documented seam, not an agent loop.
+`/healthz`, alongside the MCP façade at `/mcp`. `/a2a` is a documented seam, not an agent
+loop — the tools are the attachable surface, and the intelligence is a recipe driving them.
+
+### Tools over MCP — the belt as one server
+
+The same fifteen instruments are served as an MCP tool server on the same port, so an
+agent can call what a notebook calls. There is no second deployment and no second port:
+the façade is generated from the registry (`mcp_server.build_server()`), and a test
+asserts the tool set *is* `registry.BELT` — a sixteenth tool cannot appear here without
+appearing in the registry first.
+
+```
+http://data-scout:8710/mcp        # streamable HTTP, dialed by container name
+```
+
+Two properties worth knowing before wiring a UI to it:
+
+- **A refusal is an error, not a zero.** A missing extra, a missing binary, an
+  unconfigured gateway, or a path outside the two roots returns an `isError` result whose
+  text carries the install command or both roots. The SDK's default would reduce that to
+  "Error executing tool <name>" and keep the text on the server; `_deliberate` re-raises
+  it so the caller can act on it.
+- **An MCP result never becomes a record.** `findings_append` is exposed, but nothing here
+  appends on your behalf: the ledger still only grows when a cell or a human decides what
+  a measurement means.
+
+Paths given to a path-taking tool must resolve under the corpora root or the workspace
+root; this server does not read the rest of the filesystem, and the corpora mount stays
+read-only.
 
 ### The devcontainer trap (read before adding a tool)
 

@@ -25,6 +25,9 @@ dependencies = [
     "imagehash",
     # report-render: report-*.md -> .html with one stylesheet.
     "markdown-it-py",
+    # The MCP façade (design §2.4): the belt as tools, on the same port. Pinned
+    # below 3 because 2.x renamed FastMCP -> MCPServer and this code uses 2.x.
+    "mcp>=2,<3",
 ]
 
 [project.optional-dependencies]
