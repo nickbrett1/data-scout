@@ -126,6 +126,9 @@ def test_exif_census_on_an_empty_directory_is_zero_not_an_error(roots):
 
 
 def test_file_census_counts_the_tree_and_names_the_dominant_bucket(corpus):
+    missing = which_missing("file")
+    if missing is not None:
+        pytest.skip("file/libmagic1 is not installed here; CI's build step has no apt belt either")
     result = file_census(corpus)
     assert result["n"] >= 2
     assert result["dominant_mime"] == "text/plain"
@@ -136,6 +139,9 @@ def test_file_census_counts_the_tree_and_names_the_dominant_bucket(corpus):
 
 
 def test_file_census_reports_a_truncated_walk_as_truncated(corpus):
+    missing = which_missing("file")
+    if missing is not None:
+        pytest.skip("file/libmagic1 is not installed here; CI's build step has no apt belt either")
     result = file_census(corpus, max_files=1)
     assert result["n"] == 1
     assert result["truncated_walk"] is True
@@ -144,3 +150,23 @@ def test_file_census_reports_a_truncated_walk_as_truncated(corpus):
 def test_file_census_on_a_missing_path_is_an_empty_census(roots):
     result = file_census(roots.tmp / "nope")
     assert result["n"] == 0
+
+
+def test_file_census_without_the_file_binary_refuses_rather_than_guessing(corpus, monkeypatch):
+    """The absent-binary path is measured in CI, where the belt really is absent.
+
+    "no files" and "no ``file``" are the same number and opposite facts, so the
+    instrument must refuse and name the package rather than return a zero.
+    """
+    import shutil
+
+    from data_scout.tools._common import ToolUnavailable
+
+    real_which = shutil.which
+    monkeypatch.setattr(
+        shutil, "which", lambda name, *a, **k: None if name == "file" else real_which(name, *a, **k)
+    )
+    with pytest.raises(ToolUnavailable) as exc:
+        file_census(corpus)
+    assert "libmagic1" in str(exc.value)
+    assert "`file` binary" in str(exc.value)

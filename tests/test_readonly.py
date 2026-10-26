@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -71,7 +72,11 @@ def test_a_write_to_a_read_only_corpus_fails_with_a_permission_error(corpus):
     try:
         with pytest.raises(PermissionError):
             (corpus / "should-not-exist.txt").write_text("nope", encoding="utf-8")
-        # And the instruments still work against it.
+        # And the instruments still read it. The measurement half is skipped where
+        # `file` is absent (CI's build step has no apt belt), but the permission
+        # assertion above is the point of the test and always runs.
+        if shutil.which("file") is None:
+            pytest.skip("`file` is not installed here, so the read half cannot be demonstrated")
         result = file_census(corpus)
         assert result["n"] >= 2
     finally:
