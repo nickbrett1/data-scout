@@ -1,0 +1,120 @@
+/* data-scout — one stylesheet for both renditions.
+ *
+ * Half a page on purpose: the requirement is "readable on a phone", not
+ * "documentation theme". Applied to report-*.html (the deliverable) and
+ * session-*.html (the evidence appendix) alike.
+ */
+
+:root {
+  --fg: #1b1b1b;
+  --bg: #fdfdfc;
+  --muted: #6b6b6b;
+  --rule: #dcdcd6;
+  --code-bg: #f2f2ee;
+  --accent: #2a5d8f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e6e4df;
+    --bg: #16171a;
+    --muted: #9b9b96;
+    --rule: #313339;
+    --code-bg: #22242a;
+    --accent: #7fb3e0;
+  }
+}
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0 auto;
+  padding: 1.6rem 1.1rem 4rem;
+  max-width: 38em;
+  color: var(--fg);
+  background: var(--bg);
+  font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4 { line-height: 1.25; margin: 2rem 0 0.6rem; font-weight: 600; }
+h1 { font-size: 1.5rem; margin-top: 0.4rem; }
+h2 { font-size: 1.2rem; }
+h3 { font-size: 1.05rem; }
+
+p, ul, ol, table, blockquote { margin: 0.7rem 0; }
+ul, ol { padding-left: 1.3rem; }
+li { margin: 0.2rem 0; }
+
+a { color: var(--accent); }
+
+hr { border: 0; border-top: 1px solid var(--rule); margin: 2rem 0; }
+
+blockquote {
+  margin-left: 0;
+  padding: 0.1rem 0 0.1rem 0.9rem;
+  border-left: 3px solid var(--rule);
+  color: var(--muted);
+}
+
+code, pre, kbd {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.88em;
+}
+
+code { background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 3px; }
+
+pre {
+  background: var(--code-bg);
+  padding: 0.8rem;
+  border-radius: 5px;
+  overflow-x: auto;      /* scroll, never clip at the margin */
+  max-height: 34rem;
+  overflow-y: auto;
+}
+
+pre code { background: none; padding: 0; }
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  display: block;
+  overflow-x: auto;      /* a wide table scrolls; the page does not */
+  font-size: 0.92em;
+}
+
+th, td { border-bottom: 1px solid var(--rule); padding: 0.35rem 0.5rem; text-align: left; }
+th { font-weight: 600; }
+
+img {
+  max-width: 100%;
+  height: auto;
+  /* Cap inline image dimensions as well as payload size: Docling output is
+   * megabytes per document, and an uncapped image makes a file that will not
+   * open on a phone. */
+  max-height: 40rem;
+}
+
+/* --- notebook-specific chrome ------------------------------------------ */
+
+.jp-Cell, .cell { margin: 1.4rem 0; }
+.jp-InputArea, .input_area { border-left: 2px solid var(--rule); padding-left: 0.7rem; }
+.jp-OutputArea, .output_area { margin-top: 0.4rem; }
+.jp-OutputArea-output pre, .output_subarea pre { max-height: 24rem; }
+
+.jp-InputPrompt, .prompt, .input_prompt {
+  color: var(--muted);
+  font-family: ui-monospace, monospace;
+  font-size: 0.8em;
+}
+
+.output_stderr pre { color: #b4472f; }
+.output_error pre, .output_error { color: #b4472f; }
+
+.meta, .data-scout-meta {
+  color: var(--muted);
+  font-size: 0.85em;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 0.6rem;
+  margin-bottom: 1.4rem;
+}

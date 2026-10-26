@@ -1,7 +1,7 @@
 [project]
 name = "data-scout"
 version = "0.1.0"
-description = "A data-scout project generated with genproj"
+description = "Profile unknown unstructured corpora with an agent that authors measurements"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -11,7 +11,20 @@ dependencies = [
     "ipykernel",
     "datasketch",
     "wordfreq",
-    "textdescriptives"
+    "textdescriptives",
+    # Declared explicitly rather than relied on transitively through
+    # textdescriptives: a transitive dependency is luck, a declared one is a
+    # contract (data-scout-genproj-scaffold §7).
+    "pandas",
+    # The observation cache. Adopted, not built: only the key is bespoke.
+    "diskcache",
+    # partition_doc is a library client for the Docling sidecar, not a model.
+    "httpx",
+    # near_dup_images: phash clusters.
+    "pillow",
+    "imagehash",
+    # report-render: report-*.md -> .html with one stylesheet.
+    "markdown-it-py",
 ]
 
 [project.optional-dependencies]
@@ -19,6 +32,20 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.4"
 ]
+# Tier 2 and optional. `pip install -e ".[semantic]"`. The tier-2 instruments
+# (embed_sample, cluster_topics, image_inventory) fail loudly, naming this
+# extra and the install command, when it is absent -- never silently zero.
+semantic = [
+    "numpy",
+    "scipy",
+    "scikit-learn",
+    "umap-learn",
+    "hdbscan",
+    "bertopic",
+]
+
+[project.scripts]
+report-render = "data_scout.render:main"
 
 [build-system]
 requires = ["setuptools>=61.0"]
@@ -26,6 +53,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+data_scout = ["styles/*.css"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

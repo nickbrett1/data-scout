@@ -48,6 +48,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libimage-exiftool-perl \
     && rm -rf /var/lib/apt/lists/*
 
+# Assert the belt at build time, not in pytest.
+#
+# A test that shells to pdffonts must skip when the binary is absent (CI's build
+# step installs the Python package but not the apt belt), and a test that can be
+# skipped into meaninglessness proves nothing about the image. This makes "the
+# image carries the instruments" a build-time fact: if a package name is wrong
+# or an install is dropped, the image does not build.
+RUN pdffonts -v && exiftool -ver && file --version && pdfinfo -v \
+    && echo "tier-0 belt present: pdffonts, exiftool, file, pdfinfo"
+
 # Runtime identity must match the workspace bind's owner (1000:1000).
 RUN groupadd --gid 1000 app \
     && useradd --uid 1000 --gid 1000 --create-home --shell /bin/bash app

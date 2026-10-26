@@ -1,6 +1,22 @@
+# LOCAL EDITS (not regenerable — re-apply after an `overwrite: true` run):
+#   1. The tier-0 instrument belt: poppler-utils (pdfinfo/pdffonts/pdfimages),
+#      libmagic1 + file (the library and the CLI), libimage-exiftool-perl.
+#
+# Why it is needed: `devcontainer-python` has no configuration schema, so this
+# devcontainer cannot be pointed at the project's own image
+# (data-scout-genproj-scaffold §6.5). The consequence is silent: the tools in
+# data_scout/tools/ import fine and then fail at runtime, because the code that
+# shells to `pdffonts` is exactly the code you cannot test where you write it.
+# Keep this install in step with the runtime Dockerfile's apt tier.
+#
+# The alternative — VS Code's "Attach to Running Container" against the compose
+# service — is the shape the convention actually recommends, because the session
+# loop runs in the deployed container. This block exists so the devcontainer is
+# not *less* capable than production in the meantime.
+
 FROM mcr.microsoft.com/devcontainers/python
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
-    && apt-get -y install --no-install-recommends git socat curl gnupg nodejs npm openssh-server mosh micro libevent-dev libncurses-dev pkg-config bison build-essential xclip \
+    && apt-get -y install --no-install-recommends git socat curl gnupg nodejs npm openssh-server mosh micro libevent-dev libncurses-dev pkg-config bison build-essential xclip poppler-utils libmagic1 file libimage-exiftool-perl \
     && curl -sLf --retry 3 --tlsv1.2 --proto "=https" 'https://packages.doppler.com/public/cli/gpg.DE2A7741A397C129.key' | gpg --dearmor -o /usr/share/keyrings/doppler-archive-keyring.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/doppler-archive-keyring.gpg] https://packages.doppler.com/public/cli/deb/debian any-version main" | tee /etc/apt/sources.list.d/doppler-cli.list \
     && apt-get update && apt-get install -y doppler
