@@ -15,10 +15,13 @@ from __future__ import annotations
 
 import importlib
 
+import diskcache
 import httpx
 import pytest
 
-from data_scout.tools.partition_doc import partition_doc
+from data_scout import cache
+from data_scout.tools._common import ToolUnavailable
+from data_scout.tools.partition_doc import cached_parts, partition_doc
 
 # The package re-exports the *function* under this name, so the module has to be
 # fetched from sys.modules to be monkeypatched.
@@ -55,7 +58,12 @@ DOC = {
 def sidecar(monkeypatch):
     """Install a fake sidecar and record every request it sees."""
     calls: list[tuple[str, str]] = []
-    state = {"polls": 0, "poll_statuses": ["pending", "started", "success"], "fail": None}
+    state = {
+        "polls": 0,
+        "poll_statuses": ["pending", "started", "success"],
+        "fail": None,
+        "doc": DOC,
+    }
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append((request.method, request.url.path))
@@ -71,7 +79,7 @@ def sidecar(monkeypatch):
         if request.url.path == "/v1/result/task-1":
             if state["fail"]:
                 return httpx.Response(500, text=state["fail"])
-            return httpx.Response(200, json=DOC)
+            return httpx.Response(200, json=state["doc"])
         return httpx.Response(404, text=f"unexpected {request.url.path}")
 
     def client(_httpx):
@@ -88,6 +96,32 @@ def _pdf(tmp_path) -> str:
     path = tmp_path / "big-book.pdf"
     path.write_bytes(b"%PDF-1.4\n% not a real pdf, but real bytes\n")
     return str(path)
+
+
+def _doc_with_n_parts(count: int) -> dict:
+    """A sidecar response with ``count`` narrative parts, for the 200-part split."""
+    texts = [
+        {
+            "self_ref": f"#/texts/{index}",
+            "label": "text",
+            "text": f"Prose part {index}.",
+            "prov": [{"page_no": index // 10 + 1}],
+        }
+        for index in range(count)
+    ]
+    return {
+        "filename": "many-parts.pdf",
+        "status": "success",
+        "document": {
+            "filename": "many-parts.pdf",
+            "json_content": {
+                "body": {"children": [{"$ref": item["self_ref"]} for item in texts]},
+                "texts": texts,
+                "tables": [],
+                "pictures": [],
+            },
+        },
+    }
 
 
 def test_partition_doc_submits_async_polls_and_fetches_the_result(sidecar, tmp_path):
@@ -161,3 +195,88 @@ def test_a_result_fetch_failure_is_reported_with_the_task_id(sidecar, tmp_path):
 
     assert "task-1" in str(exc.value)
     assert "result store unavailable" in str(exc.value)
+
+
+def test_the_inline_result_is_capped_while_the_cached_observation_is_complete(sidecar, tmp_path):
+    """Item 4's split: 200 inline, every part on disk, one honest denominator.
+
+    A 2,246-part document was cached truncated at 200 before this, so a reader
+    over the cache read a truncated observation and could not tell. ``n`` is
+    the denominator for both views.
+    """
+    _calls, state, _ = sidecar
+    state["doc"] = _doc_with_n_parts(250)
+    path = _pdf(tmp_path)
+
+    inline = partition_doc(path)
+
+    assert inline["n"] == 250
+    assert inline["value"] == 250
+    assert len(inline["parts"]) == 200
+    assert inline["parts_truncated"] is True
+
+    full = cached_parts(path)
+
+    assert full["n"] == 250
+    assert len(full["parts"]) == 250
+    assert full["observation_source"] == "cache"
+    # The two views are the same observation, not two measurements.
+    assert full["cache_key"] == inline["cache_key"]
+
+
+def test_the_reader_fails_loudly_on_a_missing_entry_and_never_converts(tmp_path, monkeypatch):
+    """Absence is not an empty corpus, and the reader has no refresh path.
+
+    ``DOCLING_URL`` is removed, so a reader that tried to convert would fail
+    with a different message. The error must name the cache and the one thing
+    that can create the entry.
+    """
+    monkeypatch.delenv("DOCLING_URL", raising=False)
+
+    with pytest.raises(ToolUnavailable) as exc:
+        cached_parts(_pdf(tmp_path))
+
+    message = str(exc.value)
+    assert "partition_doc" in message
+    assert "cached observation" in message
+    assert "Call partition_doc" in message
+    # No side effect: a missing entry is not a reason to start converting.
+    assert not cache.cache_directory().exists()
+
+
+def test_the_reader_takes_its_key_from_the_writer_not_a_version_literal(
+    sidecar, tmp_path, monkeypatch
+):
+    """The key is whatever the decorator derives, including the version.
+
+    v1 and v2 keys differ for identical bytes, so a literal here would rot at
+    the next bump. This writes an entry under a key no version string could
+    produce and points the writer's key function at it: only a reader that
+    delegates to the writer can find it.
+    """
+    path = _pdf(tmp_path)
+    directory = cache.cache_directory()
+    directory.mkdir(parents=True, exist_ok=True)
+    observation = {
+        "value": 2,
+        "n": 2,
+        "unit_notes": "parts",
+        "part_type_counts": {"NarrativeText": 2},
+        "parts": [{"type": "NarrativeText", "text": "one"}, {"type": "NarrativeText", "text": "two"}],
+        "origin": "docling-json",
+        "docling_task_status": "success",
+        "doc_name": "many-parts.pdf",
+        "docling_url": BASE,
+        "model_version": "unknown",
+    }
+    with diskcache.Cache(str(directory)) as store:
+        store["key-derived-by-the-writer"] = observation
+    monkeypatch.setattr(
+        partition_doc_module._observation, "cache_key", lambda *a, **k: "key-derived-by-the-writer"
+    )
+
+    full = cached_parts(path)
+
+    assert full["n"] == 2
+    assert len(full["parts"]) == 2
+    assert full["cache_key"] == "key-derived-by-the-writer"

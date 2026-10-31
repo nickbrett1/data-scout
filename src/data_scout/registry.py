@@ -113,10 +113,14 @@ BELT: dict[str, ToolSpec] = {
         _tool(
             name="partition_doc",
             group="structure",
-            # 2: async submit + poll. A measurement made through the synchronous
-            # endpoint is not the same observation (it could not convert a
-            # document over ~229 pages at all), so old ledger lines stay "1".
-            version="2",
+            # 3: the cached observation is now the full part list. Async submit +
+            # poll arrived at 2, and a measurement made through the synchronous
+            # endpoint is a different observation (it could not convert a
+            # document over ~229 pages at all) — old ledger lines stay "1".
+            # Version 2 cached the *inline* measurement, so a 2,246-part
+            # document was cached truncated at 200; a v2 entry must not be read
+            # as if it were v3.
+            version="3",
             unit="parts",
             tier=1,
             purity="network",

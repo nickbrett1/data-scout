@@ -171,6 +171,22 @@ def cached(
     return decorator
 
 
+def read_entry(key: str) -> Any | None:
+    """The stored value for ``key``, or ``None`` when there is no entry.
+
+    Read-only: it does not create the cache directory and it never calls the
+    wrapped function. Absence comes back as ``None`` so the *caller* decides
+    what it means — for an observation it must not become a zero or an empty
+    corpus (item 2's rule), which is why the one reader in the belt raises
+    rather than returning ``[]``.
+    """
+    directory = cache_directory()
+    if not directory.is_dir():
+        return None
+    with diskcache.Cache(str(directory)) as store:
+        return store.get(key, default=None)
+
+
 def clear_cache(directory: str | Path | None = None) -> None:
     """Delete the cache. The whole recovery procedure, and always safe.
 

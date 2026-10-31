@@ -9,6 +9,10 @@ calls::
 One implementation per instrument (design §2.2). Do not add a sixteenth: the
 belt is capped at fifteen and design §10's pruning rule is the only headroom
 there is.
+
+``cached_parts`` is deliberately **not** an instrument: it is a loud reader
+over ``partition_doc``'s cached observation, it is absent from the registry,
+and it never converts anything.
 """
 
 from __future__ import annotations
@@ -23,13 +27,14 @@ from data_scout.tools.image_inventory import image_inventory
 from data_scout.tools.measurement_register import measurement_register
 from data_scout.tools.near_dup_docs import near_dup_docs
 from data_scout.tools.near_dup_images import near_dup_images
-from data_scout.tools.partition_doc import partition_doc
+from data_scout.tools.partition_doc import cached_parts, partition_doc
 from data_scout.tools.pdf_forensics import pdf_forensics
 from data_scout.tools.sample import sample, write_sample_anchor
 from data_scout.tools.structure_mix import structure_mix
 from data_scout.tools.text_quality import text_quality
 
 __all__ = [
+    "cached_parts",
     "candidate_density",
     "cluster_topics",
     "embed_sample",

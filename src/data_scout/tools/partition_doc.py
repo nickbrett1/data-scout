@@ -23,8 +23,13 @@ import time
 from pathlib import Path
 from typing import Any
 
-from data_scout.cache import cached
-from data_scout.tools._common import ToolUnavailable, capped, measurement
+from data_scout.cache import cached, read_entry
+from data_scout.tools._common import (
+    ToolUnavailable,
+    absent_is_not_zero,
+    capped,
+    measurement,
+)
 
 DOCLING_URL_ENV = "DOCLING_URL"
 DOCLING_MODEL_VERSION_ENV = "DOCLING_MODEL_VERSION"
@@ -344,13 +349,16 @@ def _require_httpx():
     return httpx
 
 
-@cached(tool="partition_doc", tool_version=f"2+docling-model:{_model_version()}")
-def partition_doc(path: str | os.PathLike[str]) -> dict[str, Any]:
-    """Partition one document into layout-aware parts.
+@cached(tool="partition_doc", tool_version=f"3+docling-model:{_model_version()}")
+def _observation(path: str | os.PathLike[str]) -> dict[str, Any]:
+    """The **cached** observation: every part, uncapped.
 
-    ``value`` is the number of parts; ``n`` is the same, because the unit *is*
-    the part. ``parts`` is capped: an inline aggregate and a small sample, never
-    the raw payload (that is what ``cache/`` is for).
+    This is what ``cache/`` holds. ``partition_doc`` is the capped inline view
+    of it, and :func:`cached_parts` is the loud reader. The split matters
+    because the old cached value was the inline measurement, so a 2,246-part
+    document was cached truncated at 200 and a reader over the cache read a
+    truncated observation. The cache version moved to 3 with the shape, because
+    a v2 entry is not this object.
     """
     target = Path(path)
     if not target.is_file():
@@ -382,18 +390,79 @@ def partition_doc(path: str | os.PathLike[str]) -> dict[str, Any]:
     counts: dict[str, int] = {}
     for part in parts:
         counts[part["type"]] = counts.get(part["type"], 0) + 1
-    inline, trimmed = capped(parts, _MAX_INLINE_PARTS)
 
     return measurement(
         value=len(parts),
         n=len(parts),
         unit_notes="parts",
         part_type_counts=counts,
-        parts=inline,
-        parts_truncated=trimmed,
+        parts=parts,
         origin=origin,
         docling_task_status=task_status,
         doc_name=document.get("filename") or target.name,
         docling_url=docling_url(),
         model_version=_model_version(),
     )
+
+
+def partition_doc(path: str | os.PathLike[str]) -> dict[str, Any]:
+    """Partition one document into layout-aware parts, capped for inline use.
+
+    ``value`` is the number of parts; ``n`` is the same, because the unit *is*
+    the part. ``parts`` is capped at 200: an inline aggregate and a small
+    sample, never the whole payload. The **full** part list is the cached
+    observation, read by :func:`cached_parts`; ``parts_truncated`` says whether
+    this view is the whole thing.
+    """
+    observation = _observation(path)
+    inline, trimmed = capped(observation["parts"], _MAX_INLINE_PARTS)
+    return measurement(
+        value=observation["value"],
+        n=observation["n"],
+        unit_notes=observation["unit_notes"],
+        part_type_counts=observation["part_type_counts"],
+        parts=inline,
+        parts_truncated=trimmed,
+        origin=observation["origin"],
+        docling_task_status=observation["docling_task_status"],
+        doc_name=observation["doc_name"],
+        docling_url=observation["docling_url"],
+        model_version=observation["model_version"],
+        observation_source=observation.get("observation_source", "fetched"),
+        cache_key=observation.get("cache_key"),
+    )
+
+
+def cached_parts(path: str | os.PathLike[str]) -> dict[str, Any]:
+    """Read the **full** cached observation for ``path``. Never converts.
+
+    The key comes from ``_observation.cache_key`` — the same decorator that
+    writes the entry — so this cannot drift from the writer's version (a
+    hardcoded "2" or "3" here would silently stop finding entries the next time
+    the observation shape changes). It is a reader, not an instrument: it is
+    absent from the registry, and it never re-runs, refreshes or converts. A
+    session that needs an entry it does not have must call ``partition_doc``
+    itself; that is the session's call, not the reader's.
+
+    Returns the same shape ``partition_doc`` returns, except ``parts`` is the
+    full list and there is no ``parts_truncated``: the honest denominator is
+    ``n`` and it covers exactly what is in ``parts``.
+    """
+    target = Path(path)
+    key = _observation.cache_key(target)
+    observation = read_entry(key)
+    if observation is None:
+        absent_is_not_zero(
+            tool="partition_doc",
+            what=f"a cached observation for {target.name!r}",
+            hint=(
+                "Call partition_doc(...) for this file first. The reader never "
+                "converts and never refreshes the cache: a missing entry is the "
+                "session's call to re-run, not something to paper over with an "
+                "empty part list."
+            ),
+        )
+    result = dict(observation)
+    result.setdefault("observation_source", "cache")
+    result["cache_key"] = key
+    return result
