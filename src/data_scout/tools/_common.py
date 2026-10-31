@@ -18,7 +18,7 @@ import os
 import shutil
 from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 #: The three keys every instrument returns (``data-scout-convention`` §5).
 RESULT_KEYS = ("value", "n", "unit_notes")
@@ -42,6 +42,18 @@ class ToolUnavailable(RuntimeError):
         super().__init__(f"{tool}: {missing} is not available. {hint}")
 
 
+def absent_is_not_zero(*, tool: str, what: str, hint: str) -> NoReturn:
+    """Raise, rather than let "we did not observe this" read as a zero.
+
+    One helper and one error shape for the whole belt. "No images" and "no
+    exiftool" are the same number and opposite facts (item 2); so are "no parts"
+    and "no cached observation" (item 4). Every path that could otherwise
+    return an empty list or a clean zero calls this instead, naming what is
+    missing and how to get it, so absence is never mistaken for a measurement.
+    """
+    raise ToolUnavailable(tool, what, hint)
+
+
 def require_binary(tool: str, binary: str, *, package: str) -> str:
     """Return the path to ``binary`` or fail loudly.
 
@@ -50,11 +62,13 @@ def require_binary(tool: str, binary: str, *, package: str) -> str:
     """
     found = shutil.which(binary)
     if found is None:
-        raise ToolUnavailable(
-            tool,
-            f"the `{binary}` binary",
-            f"Install {package} (apt: apt-get install -y --no-install-recommends "
-            f"{package}). It is in the runtime image's tier-0 belt.",
+        absent_is_not_zero(
+            tool=tool,
+            what=f"the `{binary}` binary",
+            hint=(
+                f"Install {package} (apt: apt-get install -y --no-install-recommends "
+                f"{package}). It is in the runtime image's tier-0 belt."
+            ),
         )
     return found
 
@@ -65,12 +79,14 @@ def require_import(tool: str, module: str, *, extra: str, packages: str | None =
         return __import__(module, fromlist=["_"])
     except ImportError:
         names = packages or module
-        raise ToolUnavailable(
-            tool,
-            f"the `{module}` package",
-            f"It needs the optional `{extra}` extra: pip install -e \".[{extra}]\" "
-            f"(brings {names}). Refusing to return a misleading default instead.",
-        ) from None
+        absent_is_not_zero(
+            tool=tool,
+            what=f"the `{module}` package",
+            hint=(
+                f"It needs the optional `{extra}` extra: pip install -e \".[{extra}]\" "
+                f"(brings {names}). Refusing to return a misleading default instead."
+            ),
+        )
 
 
 def measurement(value: Any, n: int, unit_notes: str, **extra: Any) -> dict[str, Any]:
