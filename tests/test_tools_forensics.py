@@ -192,6 +192,26 @@ def test_file_census_on_a_missing_path_is_an_empty_census(roots):
     assert result["n"] == 0
 
 
+def test_file_census_refuses_a_missing_path_when_file_is_absent(roots, monkeypatch):
+    """The decision: a missing path and a missing `file` are two facts, not one zero.
+
+    They used to collapse into ``n == 0``. The zero now needs the instrument that
+    would have produced it, so this must raise instead of reporting an empty census
+    — that is the behaviour change, and this test is what stops it being reverted.
+    """
+    import shutil
+
+    real_which = shutil.which
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name, *a, **k: None if name == "file" else real_which(name, *a, **k),
+    )
+    with pytest.raises(ToolUnavailable) as exc:
+        file_census(roots.tmp / "nope")
+    assert "libmagic1" in str(exc.value)
+
+
 def test_file_census_refuses_an_empty_tree_when_file_is_absent(roots, monkeypatch):
     """Same defect class as exif_census: the zero must not hide a missing binary."""
     import shutil
