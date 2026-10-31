@@ -15,6 +15,7 @@ from data_scout.tools import (
     text_quality,
     write_sample_anchor,
 )
+from data_scout.tools._common import NotATextSource, as_texts
 
 PROSE = (
     "The harbour was quiet at that hour, and the fishing boats lay still against "
@@ -143,3 +144,46 @@ def test_near_dup_images_clusters_a_resaved_image(tmp_path):
     assert result["decoded"] == 3
     assert result["duplicate_count"] >= 1
     assert result["cluster_count"] >= 1
+
+
+# ---- item 3: a pathname is not text --------------------------------------
+
+
+@pytest.mark.parametrize("tool", [text_quality, candidate_density, near_dup_docs])
+def test_a_relative_path_that_is_not_a_file_raises_instead_of_measuring_the_name(tool, tmp_path, monkeypatch):
+    """The defect: ``as_texts`` silently measured the *string* of the path.
+
+    ``data/GREMLIN_PDF.pdf`` under a CWD of ``/app`` produced a clean small
+    ``n`` over a 20-character pathname, with a unit of characters and no error.
+    That is a plausible number with a false unit, so the fallback to string is
+    removed and this raises instead.
+    """
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(NotATextSource) as exc:
+        tool("data/GREMLIN_PDF.pdf")
+    assert "data/GREMLIN_PDF.pdf" in str(exc.value)
+    assert "not a file" in str(exc.value)
+
+
+def test_a_path_like_string_without_a_slash_still_raises(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(NotATextSource, match="not a file"):
+        text_quality("missing-report.epub", include_textdescriptives=False)
+
+
+def test_a_directory_is_not_a_text_source(dataset):
+    """A directory used to silently become its own pathname."""
+    with pytest.raises(NotATextSource, match="directory"):
+        text_quality(dataset, include_textdescriptives=False)
+
+
+def test_a_file_path_is_still_read_and_prose_is_still_prose(dataset, tmp_path):
+    from_file = text_quality(dataset / "one.txt", include_textdescriptives=False)
+    from_prose = text_quality(PROSE, include_textdescriptives=False)
+    assert from_file["n"] == from_prose["n"] == len(PROSE)
+
+
+def test_a_long_string_is_text_even_if_it_mentions_a_slash():
+    """The path heuristic is bounded: prose is not a path just because it has one."""
+    prose = ("The harbour and the pier, at night, under a cold moon. " * 100) + " and/or "
+    assert as_texts(prose) == [prose]

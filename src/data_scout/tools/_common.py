@@ -24,6 +24,14 @@ from typing import Any
 RESULT_KEYS = ("value", "n", "unit_notes")
 
 
+class NotATextSource(ValueError):
+    """A source that is not text and is not a file either.
+
+    Raised instead of silently measuring a pathname as if it were prose: that
+    failure shape is a plausible number with a false unit and no signal.
+    """
+
+
 class ToolUnavailable(RuntimeError):
     """A tool's instrument is not present. Loud, named, actionable."""
 
@@ -154,24 +162,79 @@ def read_text(path: str | os.PathLike[str], *, max_bytes: int | None = None) -> 
     return data.decode("utf-8", errors="replace")
 
 
+#: Suffixes that make a bare string unambiguously "I meant a file". A string
+#: carrying one of these is never silently measured as prose.
+_PATH_SUFFIXES = frozenset(
+    {
+        ".azw3", ".bmp", ".csv", ".doc", ".docx", ".epub", ".gif", ".gz", ".heic",
+        ".htm", ".html", ".ipynb", ".jpeg", ".jpg", ".json", ".jsonl", ".md",
+        ".mobi", ".odt", ".pdf", ".png", ".ppt", ".pptx", ".rdf", ".rst", ".rtf",
+        ".tar", ".tif", ".tiff", ".tsv", ".txt", ".webp", ".xlsx", ".xml",
+        ".yaml", ".yml", ".zip",
+    }
+)
+
+
+def _looks_like_path(value: str) -> bool:
+    """Whether a short string is a *candidate path* rather than literal text.
+
+    Deliberately conservative in the other direction: a long string or one with
+    a newline is text, because asking the filesystem about a 4 KB paragraph
+    raises "file name too long" and a whole document is obviously not a path.
+    """
+    if value.startswith(("http://", "https://")):
+        return False
+    if "/" in value or "\\" in value:
+        return True
+    return Path(value).suffix.lower() in _PATH_SUFFIXES
+
+
 def as_texts(source: Any) -> list[str]:
     """Accept a path, a string, or a sequence of either, and return texts.
 
     The instruments take ``measure(text | rows | path)``; this is the one place
     that decides what those three words mean, so no tool grows its own dialect.
+
+    **A pathname is never measured as if it were text.** The old behaviour fell
+    back to the literal string whenever ``Path(source).is_file()`` was false, so
+    a relative path under a different CWD became a clean measurement of a
+    pathname — a plausible number with a false unit and no error. Now a string
+    that looks like a path must be a file, and a path-shaped object must be a
+    file too; otherwise :class:`NotATextSource` names the CWD and asks for the
+    real path. Literal text still passes through when it is clearly prose.
     """
-    if isinstance(source, str | os.PathLike):
-        # A string is a path only if it can be one: a 4 KB paragraph is text,
-        # and asking the filesystem about it raises "file name too long".
-        if isinstance(source, str) and (len(source) > 4096 or "\n" in source):
+    if isinstance(source, os.PathLike) and not isinstance(source, str):
+        path = Path(source)
+        if path.is_dir():
+            raise NotATextSource(
+                f"as_texts: {path} is a directory, not a text source. Pass the "
+                "files to measure (or a list of them); a directory is not text."
+            )
+        if not path.is_file():
+            raise NotATextSource(f"as_texts: {path} is not a file")
+        return [read_text(path)]
+    if isinstance(source, str):
+        if len(source) > 4096 or "\n" in source:
             return [source]
         candidate = Path(source)
         try:
             if candidate.is_file():
                 return [read_text(candidate)]
+            if candidate.is_dir():
+                raise NotATextSource(
+                    f"as_texts: {source!r} is a directory, not a text source. Pass "
+                    "the files to measure; a directory is not text."
+                )
         except OSError:
             pass
-        return [str(source)]
+        if _looks_like_path(source):
+            raise NotATextSource(
+                f"as_texts: {source!r} looks like a path but is not a file "
+                f"(the current directory is {Path.cwd()}). Refusing to measure the "
+                "pathname as if it were text: pass an absolute path to the file, "
+                "or pass the text itself."
+            )
+        return [source]
     if isinstance(source, list | tuple):
         texts: list[str] = []
         for item in source:
