@@ -118,11 +118,11 @@ def iter_files(
     """Yield files under ``path`` (or ``path`` itself), read-only, sorted.
 
     Sorted so a sample or a census is deterministic without a seed, and
-    symlinks are not followed by default so a corpus cannot walk out of its own
+    symlinks are not followed by default so a dataset cannot walk out of its own
     mount through a link.
 
     **Opens nothing for writing.** There is deliberately no helper here that
-    creates a file under a corpus.
+    creates a file under a dataset.
     """
     wanted = {suffix.lower() for suffix in suffixes} if suffixes else None
     root = Path(path)

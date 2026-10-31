@@ -16,12 +16,12 @@ services:
     ports:
       - "0.0.0.0:8710:8710"
     volumes:
-      - /srv/CORPORA-ROOT-PLACEHOLDER:/corpora:ro
+      - /srv/DATASETS-ROOT-PLACEHOLDER:/datasets:ro
       - /srv/data-scout/workspace:/workspace
     environment:
       # Set your environment variables here or in a NAS-side .env file
       # (genproj never commits secrets). See .env.example.
-      DATA_SCOUT_CORPORA_ROOT: ${DATA_SCOUT_CORPORA_ROOT:-/corpora}
+      DATA_SCOUT_DATASETS_ROOT: ${DATA_SCOUT_DATASETS_ROOT:-/datasets}
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
       - "homepage.group=Services"

@@ -12,7 +12,7 @@ The six steps, in order (``data-scout-convention`` §4.3):
    lives here, not only in the writer, because this is the component that runs a
    kernel and knows which one, so it covers hand-edited notebooks too.
 2. **Execute the notebook** for the artifact, saving outputs.
-3. **Re-execute into a scratch copy** of the corpus workspace and diff
+3. **Re-execute into a scratch copy** of the dataset workspace and diff
    ``findings.jsonl`` modulo ``ts``. The verification execution must never
    target the live workspace, or every render appends its own ledger a second
    time, silently, and the append-only ledger stops being a record of what the
@@ -74,7 +74,7 @@ def scoped_env(values: dict[str, str]) -> Iterator[None]:
 
 
 def scratch_workspace(source: Path, *, destination: Path) -> Path:
-    """Copy a corpus workspace for the verification run, without its cache.
+    """Copy a dataset workspace for the verification run, without its cache.
 
     The cache is *deliberately* not copied: the verification run shares the live
     observation cache, which is what makes a ``purity: network`` tool reproduce
@@ -101,7 +101,7 @@ def execute_notebook(
     path: Path,
     *,
     workspace_root: Path,
-    corpus_id: str,
+    dataset_id: str,
     session: int,
     timeout: int = 1800,
 ) -> Any:
@@ -117,7 +117,7 @@ def execute_notebook(
     kernel_name = notebook.metadata["kernelspec"]["name"]
     env = {
         workspace.WORKSPACE_ENV: str(workspace_root),
-        workspace.CORPUS_ID_ENV: corpus_id,
+        workspace.DATASET_ID_ENV: dataset_id,
         workspace.SESSION_ENV: str(session),
     }
     with scoped_env(env):
@@ -268,8 +268,8 @@ def _escape(text: str) -> str:
 # --------------------------------------------------------------------------
 
 
-def pick_notebook(corpus_id: str, session: int | None) -> tuple[Path, int]:
-    directory = workspace.notebook_dir(corpus_id)
+def pick_notebook(dataset_id: str, session: int | None) -> tuple[Path, int]:
+    directory = workspace.notebook_dir(dataset_id)
     if session is not None:
         path = directory / f"session-{session}.ipynb"
         if not path.is_file():
@@ -286,21 +286,21 @@ def pick_notebook(corpus_id: str, session: int | None) -> tuple[Path, int]:
     return path, number
 
 
-def pick_report(corpus_id: str, explicit: str | None) -> Path | None:
+def pick_report(dataset_id: str, explicit: str | None) -> Path | None:
     if explicit:
         path = Path(explicit)
         if not path.is_file():
             raise SystemExit(f"report-render: no report at {path}")
         return path
-    candidates = sorted(workspace.workspace_dir(corpus_id).glob("report-*.md"))
+    candidates = sorted(workspace.workspace_dir(dataset_id).glob("report-*.md"))
     return candidates[-1] if candidates else None
 
 
-def _meta_line(corpus_id: str, session: int, source: str) -> str:
+def _meta_line(dataset_id: str, session: int, source: str) -> str:
     from datetime import UTC, datetime
 
     stamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-    return f"data-scout · corpus {corpus_id} · session {session} · {source} · rendered {stamp}"
+    return f"data-scout · dataset {dataset_id} · session {session} · {source} · rendered {stamp}"
 
 
 # --------------------------------------------------------------------------
@@ -316,7 +316,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "its findings.jsonl lines, then render report and notebook to HTML."
         ),
     )
-    parser.add_argument("corpus_id", help="the corpus id, as under the corpora root")
+    parser.add_argument("dataset_id", help="the dataset id, as it appears under the datasets root")
     parser.add_argument("--session", type=int, default=None, help="session number (default: the highest present)")
     parser.add_argument("--report", default=None, help="path to report-*.md (default: the latest in the workspace)")
     parser.add_argument("--workspace", default=None, help="override DATA_SCOUT_WORKSPACE")
@@ -325,19 +325,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--quiet", action="store_true", help="do not print per-cell output")
     args = parser.parse_args(argv)
 
-    corpus_id = workspace.validate_corpus_id(args.corpus_id)
+    dataset_id = workspace.validate_dataset_id(args.dataset_id)
     if args.workspace:
         os.environ[workspace.WORKSPACE_ENV] = args.workspace
     root = workspace.workspace_root()
-    corpus_ws = workspace.workspace_dir(corpus_id)
-    if not corpus_ws.is_dir():
-        print(f"report-render: no workspace at {corpus_ws}", file=sys.stderr)
+    dataset_ws = workspace.workspace_dir(dataset_id)
+    if not dataset_ws.is_dir():
+        print(f"report-render: no workspace at {dataset_ws}", file=sys.stderr)
         return 2
-    workspace.ensure_workspace(corpus_id)
+    workspace.ensure_workspace(dataset_id)
 
-    notebook_path, session = pick_notebook(corpus_id, args.session)
-    ledger = Ledger(workspace.ledger_path(corpus_id))
-    print(f"report-render: corpus {corpus_id}, session {session}")
+    notebook_path, session = pick_notebook(dataset_id, args.session)
+    ledger = Ledger(workspace.ledger_path(dataset_id))
+    print(f"report-render: dataset {dataset_id}, session {session}")
     print(f"report-render: notebook {notebook_path}")
     print(f"report-render: ledger {ledger.path} ({len(ledger.lines())} lines)")
 
@@ -345,14 +345,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     scratch_parent = Path(tempfile.mkdtemp(prefix="data-scout-verify-"))
     scratch_root = scratch_parent
     try:
-        scratch_workspace(corpus_ws, destination=scratch_root / corpus_id)
+        scratch_workspace(dataset_ws, destination=scratch_root / dataset_id)
 
         # --- 1+2. execute for the artifact ---------------------------------
         print("report-render: executing for the artifact")
         executed = execute_notebook(
             notebook_path,
             workspace_root=root,
-            corpus_id=corpus_id,
+            dataset_id=dataset_id,
             session=session,
             timeout=args.timeout,
         )
@@ -375,13 +375,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         verification = execute_notebook(
             notebook_path,
             workspace_root=scratch_root,
-            corpus_id=corpus_id,
+            dataset_id=dataset_id,
             session=session,
             timeout=args.timeout,
         )
         verification_errors = cell_errors(verification)
         live_after = ledger.lines()
-        scratch_ledger = Ledger(scratch_root / corpus_id / workspace.LEDGER_FILENAME)
+        scratch_ledger = Ledger(scratch_root / dataset_id / workspace.LEDGER_FILENAME)
 
         problems = diff_lines(live_after, scratch_ledger.lines())
         ledger_problems = ledger.verify()
@@ -414,14 +414,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         session_html.write_text(
             render_notebook(
                 executed,
-                title=f"{corpus_id} — session {session}",
-                meta=_meta_line(corpus_id, session, notebook_path.name),
+                title=f"{dataset_id} — session {session}",
+                meta=_meta_line(dataset_id, session, notebook_path.name),
             ),
             encoding="utf-8",
         )
         rendered.append(session_html)
 
-        report_path = pick_report(corpus_id, args.report)
+        report_path = pick_report(dataset_id, args.report)
         if report_path is None:
             print("report-render: no report-*.md in the workspace; nothing to render for the deliverable")
         else:
@@ -430,7 +430,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 render_markdown(
                     report_path.read_text(encoding="utf-8"),
                     title=report_path.stem,
-                    meta=_meta_line(corpus_id, session, report_path.name),
+                    meta=_meta_line(dataset_id, session, report_path.name),
                 ),
                 encoding="utf-8",
             )

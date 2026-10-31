@@ -42,7 +42,7 @@ import diskcache
 
 from data_scout import workspace
 
-#: Set to a path to override the per-corpus cache location (tests, scratch runs).
+#: Set to a path to override the per-dataset cache location (tests, scratch runs).
 CACHE_DIR_ENV = "DATA_SCOUT_CACHE_DIR"
 
 _CHUNK = 1024 * 1024

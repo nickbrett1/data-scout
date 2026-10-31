@@ -18,15 +18,15 @@ import pytest
 from data_scout import __main__ as app
 from data_scout import registry, workspace
 
-CORPUS_ID = "demo-corpus"
+DATASET_ID = "demo-dataset"
 
 
 @pytest.fixture
-def server(corpus_workspace):
+def server(dataset_workspace):
     import uvicorn
 
-    (corpus_workspace / "report-2026-10-26.html").write_text("<html>report</html>", encoding="utf-8")
-    (corpus_workspace / "findings.jsonl").write_text('{"a":1}\n{"b":2}\n', encoding="utf-8")
+    (dataset_workspace / "report-2026-10-26.html").write_text("<html>report</html>", encoding="utf-8")
+    (dataset_workspace / "findings.jsonl").write_text('{"a":1}\n{"b":2}\n', encoding="utf-8")
 
     sock = socket.socket()
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -73,7 +73,7 @@ def test_healthz_reports_the_two_resolved_roots_and_the_belt(server, roots):
     payload = json.loads(body)
     assert payload["status"] == "ok"
     assert payload["workspace"] == str(roots.workspace)
-    assert payload["corpora_root"] == str(roots.corpora)
+    assert payload["datasets_root"] == str(roots.datasets)
     assert payload["mcp"] == "/mcp"
     assert payload["belt"] == {"size": 15, "cap": registry.MAX_BELT_SIZE}
 
@@ -81,7 +81,7 @@ def test_healthz_reports_the_two_resolved_roots_and_the_belt(server, roots):
 def test_the_index_lists_the_frozen_artifacts(server):
     status, _content_type, body = get(server, "/report/")
     assert status == 200
-    assert CORPUS_ID in body
+    assert DATASET_ID in body
     assert "report-2026-10-26.html" in body
     assert "2 finding lines" in body
 
@@ -90,12 +90,62 @@ def test_index_json_is_the_same_index_for_machines(server):
     status, _content_type, body = get(server, "/report/index.json")
     assert status == 200
     payload = json.loads(body)
-    assert payload["corpora"][0]["corpus_id"] == CORPUS_ID
-    assert payload["corpora"][0]["findings_lines"] == 2
+    assert payload["datasets"][0]["dataset_id"] == DATASET_ID
+    assert payload["datasets"][0]["findings_lines"] == 2
+    assert payload["datasets"][0]["scouted"] is True
+
+
+def test_the_index_lists_datasets_that_are_available_to_scout(server, roots):
+    waiting = roots.datasets / "waiting-dataset"
+    (waiting / "docs").mkdir(parents=True)
+    (waiting / "a.txt").write_text("hello", encoding="utf-8")
+    (waiting / "b.pdf").write_bytes(b"%PDF-1.4")
+
+    status, _content_type, body = get(server, "/report/")
+    assert status == 200
+    assert "waiting-dataset" in body
+    assert "Available to scout" in body
+    assert "no frame.md yet" in body
+    assert "2 files" in body
+    assert "1 dir" in body
+    assert "txt 1, pdf 1" in body
+    assert "No reports yet." in body
+
+    _status, _content_type, body = get(server, "/report/index.json")
+    payload = json.loads(body)
+    waiting_record = next(item for item in payload["datasets"] if item["dataset_id"] == "waiting-dataset")
+    assert waiting_record["files"] == 2
+    assert waiting_record["directories"] == 1
+    assert waiting_record["bytes"] == 13
+    assert waiting_record["extensions"] == {".txt": 1, ".pdf": 1}
+    assert waiting_record["frame"] is False
+    assert waiting_record["in_root"] is True
+    assert waiting_record["scouted"] is False
+
+
+def test_a_workspace_with_no_dataset_under_the_root_is_still_listed(server):
+    _status, _content_type, body = get(server, "/")
+    assert DATASET_ID in body
+    assert "Workspace only" in body
+    assert "report-2026-10-26.html" in body
+
+
+def test_an_unavailable_datasets_root_is_stated_not_hidden(server, roots, monkeypatch):
+    monkeypatch.setenv(workspace.DATASETS_ROOT_ENV, str(roots.tmp / "gone"))
+
+    status, _content_type, body = get(server, "/report/")
+    assert status == 200
+    assert "datasets root is unavailable" in body
+
+    _status, _content_type, body = get(server, "/report/index.json")
+    payload = json.loads(body)
+    assert payload["datasets_error"] is not None
+    # The workspace's frozen artifacts survive a mount being down.
+    assert any(item["dataset_id"] == DATASET_ID for item in payload["datasets"])
 
 
 def test_a_frozen_artifact_is_served(server):
-    status, content_type, body = get(server, f"/report/{CORPUS_ID}/report-2026-10-26.html")
+    status, content_type, body = get(server, f"/report/{DATASET_ID}/report-2026-10-26.html")
     assert status == 200
     assert content_type.startswith("text/html")
     assert body == "<html>report</html>"
@@ -108,16 +158,16 @@ def test_a_head_request_has_no_body(server):
     assert body == b""
 
 
-def test_the_ledger_is_not_servable_even_from_the_right_corpus(server):
-    status, _content_type, _body = get(server, f"/report/{CORPUS_ID}/findings.jsonl")
+def test_the_ledger_is_not_servable_even_from_the_right_dataset(server):
+    status, _content_type, _body = get(server, f"/report/{DATASET_ID}/findings.jsonl")
     assert status == 404
 
 
 def test_traversal_is_refused(server):
     for path in (
-        f"/report/{CORPUS_ID}/../../etc/passwd",
+        f"/report/{DATASET_ID}/../../etc/passwd",
         "/report/../etc/passwd",
-        f"/report/{CORPUS_ID}/%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+        f"/report/{DATASET_ID}/%2e%2e%2f%2e%2e%2fetc%2fpasswd",
     ):
         status, _content_type, _body = get(server, path)
         assert status == 404, path
@@ -137,12 +187,12 @@ def test_the_a2a_route_is_a_documented_seam_not_an_agent_loop(server):
     assert "/mcp" in payload["detail"]
 
 
-def test_resolve_artifact_rejects_an_invalid_corpus_id():
+def test_resolve_artifact_rejects_an_invalid_dataset_id():
     assert app.resolve_artifact("/report/..%2f..%2fx/report-a.html") is None
-    assert app.resolve_artifact("/report/demo-corpus/notes.txt") is None
+    assert app.resolve_artifact("/report/demo-dataset/notes.txt") is None
 
 
-def test_the_app_never_writes(corpus_workspace):
+def test_the_app_never_writes(dataset_workspace):
     """Nothing this module imports opens a file for writing."""
     import ast
     import inspect

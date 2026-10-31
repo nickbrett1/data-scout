@@ -3,7 +3,7 @@
 The distinction it exists for: a **photograph** carries a camera Make/Model, a
 **screenshot** carries none, and a **page render** carries none either. So the
 headline number is ``photographic_share`` — the share of images with camera
-metadata — which separates a photo library from a corpus of rendered pages
+metadata — which separates a photo library from a dataset of rendered pages
 before anyone looks at a single pixel.
 
 Metadata is aggregated only; a full exiftool dump is megabytes per file and the
@@ -110,7 +110,7 @@ def exif_census(
         return _empty_census()
     if target.is_dir():
         # exiftool -r walks the tree itself; the suffix filter below only trims
-        # the *aggregate*, so a corpus of screenshots is still counted.
+        # the *aggregate*, so a dataset of screenshots is still counted.
         files = [item for item in iter_files(target, suffixes=_IMAGE_SUFFIXES, limit=max_files)]
         records = _records(target, max_files)
         if files and len(records) > len(files):

@@ -3,7 +3,7 @@
 Reuses the **approach** of reader's image dedupe (perceptual hash, cluster by
 Hamming distance), not its code: the one-way import rule again.
 
-The number that matters is ``duplicate_share``. Above ~0.5 the corpus is
+The number that matters is ``duplicate_share``. Above ~0.5 the dataset is
 mostly re-renders of the same pages and the unit is probably a page, not an
 image; that is a phase-3 decision this instrument informs.
 """

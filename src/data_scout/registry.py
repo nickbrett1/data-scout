@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 Purity = Literal["pure", "read-only-sql", "network"]
 Group = Literal["forensics", "structure", "content", "semantic", "redundancy", "sampling", "ledger"]
 
-#: design §10 caps the belt at ~15 and says prune any tool no corpus has used
+#: design §10 caps the belt at ~15 and says prune any tool no dataset has used
 #: twice. Fifteen instruments are in design §2.2, so the cap is full on day one
 #: and there is no headroom: do not add a sixteenth without pruning one.
 MAX_BELT_SIZE = 15
@@ -38,7 +38,7 @@ class ToolSpec(BaseModel):
     validated_on: tuple[str, ...] = Field(
         default=(),
         description=(
-            "corpus ids where the number has been READ AND TRUSTED — not "
+            "dataset ids where the number has been READ AND TRUSTED — not "
             "'works', not 'has been checked'"
         ),
     )
@@ -250,7 +250,7 @@ def get(name: str) -> ToolSpec:
     except KeyError:
         raise KeyError(
             f"{name!r} is not in the belt. The belt is {len(BELT)} instruments "
-            f"by design (design §10); a corpus that needs a sixteenth is a "
+            f"by design (design §10); a dataset that needs a sixteenth is a "
             f"recorded gap, not a new tool. Known: {', '.join(names())}"
         ) from None
 

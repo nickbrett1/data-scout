@@ -5,7 +5,7 @@ answers "what files have I got" without opening any of them, so a source that is
 already closed (empty, wrong format, a hundred copies of the same JPEG) is
 closed here for free.
 
-``file`` decides the type, not the extension: a corpus of ``.pdf`` files that
+``file`` decides the type, not the extension: a dataset of ``.pdf`` files that
 are really scans, or ``.txt`` files that are really PostScript, is a normal
 finding and the extension cannot see it.
 """
@@ -61,7 +61,7 @@ def file_census(
 ) -> dict[str, Any]:
     """Census a file or a tree.
 
-    ``max_files`` caps the walk for a corpus too large to census exhaustively;
+    ``max_files`` caps the walk for a dataset too large to census exhaustively;
     ``n`` reports how many were actually examined, so a capped census is never
     mistaken for a complete one.
     """

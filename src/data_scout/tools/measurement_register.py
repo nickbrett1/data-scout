@@ -1,7 +1,7 @@
 """``measurement_register`` — read the registry, including what is untrusted.
 
 ``validated_on`` is the only thing distinguishing a *built* instrument from a
-*trusted* one: it lists corpus ids where the number has been read and trusted —
+*trusted* one: it lists dataset ids where the number has been read and trusted —
 not "works", not "has been checked". At the point this belt is built it is empty
 for every tool, and that emptiness is the honest state the pruning rule depends
 on knowing.

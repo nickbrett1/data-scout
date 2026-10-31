@@ -23,17 +23,17 @@ def installed(module: str) -> bool:
     return importlib.util.find_spec(module) is not None
 
 
-def test_partition_doc_without_a_docling_url_says_which_variable(roots, corpus):
+def test_partition_doc_without_a_docling_url_says_which_variable(roots, dataset):
     with pytest.raises(ToolUnavailable) as exc:
-        partition_doc(corpus / "one.txt")
+        partition_doc(dataset / "one.txt")
     assert "DOCLING_URL" in str(exc.value)
     assert "sidecar" in str(exc.value) or "does not ship a model" in str(exc.value)
 
 
-def test_partition_doc_without_the_extra_semantic_never_returns_a_zero(roots, corpus):
+def test_partition_doc_without_the_extra_semantic_never_returns_a_zero(roots, dataset):
     """No URL, no httpx call, no measurement: it refuses."""
     with pytest.raises(ToolUnavailable):
-        partition_doc(corpus / "one.txt")
+        partition_doc(dataset / "one.txt")
 
 
 def test_embed_sample_without_a_gateway_names_both_variables():
@@ -64,17 +64,17 @@ def test_cluster_topics_without_the_semantic_extra_names_the_install_command():
     assert 'pip install -e ".[semantic]"' in message
 
 
-def test_image_inventory_without_a_vision_model_refuses(roots, corpus, monkeypatch):
+def test_image_inventory_without_a_vision_model_refuses(roots, dataset, monkeypatch):
     monkeypatch.setenv("LITELLM_BASE_URL", "http://gateway.invalid:4000")
     monkeypatch.setenv("LITELLM_API_KEY", "test-key")
     with pytest.raises(ToolUnavailable) as exc:
-        image_inventory(corpus / "one.txt")
+        image_inventory(dataset / "one.txt")
     assert "vision embedding model" in str(exc.value)
 
 
-def test_image_inventory_without_a_gateway_refuses(roots, corpus):
+def test_image_inventory_without_a_gateway_refuses(roots, dataset):
     with pytest.raises(ToolUnavailable) as exc:
-        image_inventory(corpus / "one.txt")
+        image_inventory(dataset / "one.txt")
     assert "gateway" in str(exc.value)
 
 

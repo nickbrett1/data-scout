@@ -93,7 +93,7 @@ def test_pdfimages_parses_counts_and_encodings():
 def test_pdf_forensics_skips_when_poppler_is_absent(roots):
     """The contract's own consequence: absent binaries skip, they do not fail."""
     missing = which_missing("pdffonts", "pdfinfo", "pdfimages")
-    pdf = roots.corpus("pdfs")
+    pdf = roots.dataset("pdfs")
     pdf.mkdir()
     (pdf / "scan.pdf").write_bytes(b"%PDF-1.4\n% not a real pdf\n")
     if missing is not None:
@@ -105,7 +105,7 @@ def test_pdf_forensics_skips_when_poppler_is_absent(roots):
 
 def test_exif_census_skips_when_exiftool_is_absent(roots):
     missing = which_missing("exiftool")
-    directory = roots.corpus("photos")
+    directory = roots.dataset("photos")
     directory.mkdir()
     (directory / "a.jpg").write_bytes(b"\xff\xd8\xff\xd9")
     if missing is not None:
@@ -115,7 +115,7 @@ def test_exif_census_skips_when_exiftool_is_absent(roots):
 
 
 def test_exif_census_on_an_empty_directory_is_zero_not_an_error(roots):
-    empty = roots.corpus("empty")
+    empty = roots.dataset("empty")
     empty.mkdir()
     result = exif_census(empty)
     assert result["n"] == 0
@@ -125,11 +125,11 @@ def test_exif_census_on_an_empty_directory_is_zero_not_an_error(roots):
 # ---- file_census -----------------------------------------------------------
 
 
-def test_file_census_counts_the_tree_and_names_the_dominant_bucket(corpus):
+def test_file_census_counts_the_tree_and_names_the_dominant_bucket(dataset):
     missing = which_missing("file")
     if missing is not None:
         pytest.skip("file/libmagic1 is not installed here; CI's build step has no apt belt either")
-    result = file_census(corpus)
+    result = file_census(dataset)
     assert result["n"] >= 2
     assert result["dominant_mime"] == "text/plain"
     assert result["value"] > 0.5
@@ -138,11 +138,11 @@ def test_file_census_counts_the_tree_and_names_the_dominant_bucket(corpus):
     assert result["zero_byte"] == 0
 
 
-def test_file_census_reports_a_truncated_walk_as_truncated(corpus):
+def test_file_census_reports_a_truncated_walk_as_truncated(dataset):
     missing = which_missing("file")
     if missing is not None:
         pytest.skip("file/libmagic1 is not installed here; CI's build step has no apt belt either")
-    result = file_census(corpus, max_files=1)
+    result = file_census(dataset, max_files=1)
     assert result["n"] == 1
     assert result["truncated_walk"] is True
 
@@ -152,7 +152,7 @@ def test_file_census_on_a_missing_path_is_an_empty_census(roots):
     assert result["n"] == 0
 
 
-def test_file_census_without_the_file_binary_refuses_rather_than_guessing(corpus, monkeypatch):
+def test_file_census_without_the_file_binary_refuses_rather_than_guessing(dataset, monkeypatch):
     """The absent-binary path is measured in CI, where the belt really is absent.
 
     "no files" and "no ``file``" are the same number and opposite facts, so the
@@ -167,6 +167,6 @@ def test_file_census_without_the_file_binary_refuses_rather_than_guessing(corpus
         shutil, "which", lambda name, *a, **k: None if name == "file" else real_which(name, *a, **k)
     )
     with pytest.raises(ToolUnavailable) as exc:
-        file_census(corpus)
+        file_census(dataset)
     assert "libmagic1" in str(exc.value)
     assert "`file` binary" in str(exc.value)

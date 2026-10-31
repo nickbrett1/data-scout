@@ -62,7 +62,7 @@ def test_text_quality_separates_prose_from_noise():
     assert prose["mtld"] > 10
 
 
-def test_text_quality_says_why_textdescriptives_is_absent_rather_than_defaulting(corpus_workspace):
+def test_text_quality_says_why_textdescriptives_is_absent_rather_than_defaulting(dataset_workspace):
     """No spaCy model here, so the optional block must explain itself."""
     result = text_quality(PROSE)
     if result.get("textdescriptives") is None:
@@ -110,7 +110,7 @@ def test_sample_refuses_to_draw_more_than_the_population():
         sample(["a", "b"], n=3)
 
 
-def test_sample_writes_the_anchor_it_needs_to_be_reproducible(corpus_workspace):
+def test_sample_writes_the_anchor_it_needs_to_be_reproducible(dataset_workspace):
     result = sample([{"id": f"r{index}"} for index in range(10)], n=3, seed=5)
     path = write_sample_anchor(result)
     anchor = json.loads(path.read_text(encoding="utf-8"))

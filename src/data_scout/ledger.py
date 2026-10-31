@@ -51,7 +51,7 @@ class Finding(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
 
     ts: datetime = Field(default_factory=utcnow)
-    corpus_id: str
+    dataset_id: str
     session: int = Field(ge=1)
     unit: str
     tool: str

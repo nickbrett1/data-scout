@@ -1,7 +1,7 @@
 """``pdf_forensics`` — ``pdfinfo`` + ``pdffonts`` + ``pdfimages -list`` in one call.
 
 Tier 0, exhaustive, free. **Zero fonts means no text layer**, which is the
-single most decisive cheap answer in the whole ladder: a scanned corpus is
+single most decisive cheap answer in the whole ladder: a scanned dataset is
 disqualified here, before any paid tier is reached.
 
 So the font count is a **first-class field**, not one number in a blob —

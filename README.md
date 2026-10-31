@@ -130,7 +130,7 @@ record, so anything that ends up in a report is a library call in a notebook cel
 ```python
 from data_scout.tools import pdf_forensics, structure_mix, candidate_density
 
-pdf_forensics("/corpora/my-corpus")        # zero fonts => no text layer
+pdf_forensics("/datasets/my-dataset")    # zero fonts => no text layer
 text_quality(sample_of_pages)              # is this text, and are the chars in words
 ```
 
@@ -145,11 +145,11 @@ pip install -e ".[semantic]"
 
 | env | what | default |
 |---|---|---|
-| `DATA_SCOUT_CORPORA_ROOT` | the corpora, mounted **read-only** | `/corpora` |
+| `DATA_SCOUT_DATASETS_ROOT` | the datasets, mounted **read-only** | `/datasets` |
 | `DATA_SCOUT_WORKSPACE` | notebooks, `findings.jsonl`, samples, cache, reports | `/workspace` |
 
-A corpus id that does not exist under the root fails loudly **naming the resolved
-root**; a corpus with no `frame.md` fails as *unprofiled* rather than being profiled
+A dataset id that does not exist under the root fails loudly **naming the resolved
+root**; a dataset with no `frame.md` fails as *unprofiled* rather than being profiled
 under an inferred id. Fail loudly, never infer.
 
 ### Rendering — `report-render`
@@ -160,8 +160,8 @@ a scratch copy of the workspace and diffs `findings.jsonl` modulo `ts`, and **re
 to render** if the re-execution does not reproduce the lines.
 
 ```bash
-docker compose exec data-scout report-render <corpus-id> [--session N] [--verify-only]
-report-render <corpus-id>          # in the dev environment, after `pip install -e .`
+docker compose exec data-scout report-render <dataset-id> [--session N] [--verify-only]
+report-render <dataset-id>          # in the dev environment, after `pip install -e .`
 ```
 
 The frozen artifacts are served on the single published port: `/report/…` (HTML) and
@@ -191,8 +191,8 @@ Two properties worth knowing before wiring a UI to it:
   appends on your behalf: the ledger still only grows when a cell or a human decides what
   a measurement means.
 
-Paths given to a path-taking tool must resolve under the corpora root or the workspace
-root; this server does not read the rest of the filesystem, and the corpora mount stays
+Paths given to a path-taking tool must resolve under the datasets root or the workspace
+root; this server does not read the rest of the filesystem, and the dataset root stays
 read-only.
 
 ### The devcontainer trap (read before adding a tool)

@@ -12,10 +12,11 @@ would be a second service (``data-scout-genproj-scaffold`` §6.2):
     Liveness plus the two resolved roots and the belt size, so a misconfigured
     mount is visible without opening a shell.
 ``/`` and ``/report/``
-    The reports index: every corpus workspace and its frozen artifacts.
-``/report/<corpus>/<file>.html``
+    The datasets index: what is available to scout, and the frozen artifacts
+    each dataset already holds.
+``/report/<dataset>/<file>.html``
     A rendered artifact. Only ``report-*.html`` and ``session-*.html`` are
-    servable, and only from a corpus directory directly under the workspace —
+    servable, and only from a dataset directory directly under the workspace —
     static file serving, no templates, no directory listing of the workspace.
 ``/report/index.json``
     The same index as JSON, for anything that is not a phone.
@@ -27,7 +28,7 @@ would be a second service (``data-scout-genproj-scaffold`` §6.2):
     reachable as tools, which is what a recipe needs and what an A2A card would
     only front.
 
-This serves the frozen artifacts and the tools. It never writes to the corpora
+This serves the frozen artifacts and the tools. It never writes to the datasets
 root, and the only thing that ever writes at all is ``findings_append``, into the
 workspace it already owns.
 """
@@ -44,7 +45,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
-from data_scout import __version__, registry, workspace
+from data_scout import __version__, inventory, registry, workspace
 from data_scout.mcp_server import MCP_PATH, build_server
 
 HOST_ENV = "DATA_SCOUT_HTTP_HOST"
@@ -85,15 +86,29 @@ font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial
 h1{font-size:1.4rem}h2{font-size:1.1rem;margin-top:1.8rem}
 li{margin:.25rem 0}a{color:#2a5d8f}code{background:#f2f2ee;padding:.1em .3em;border-radius:3px}
 .muted{color:#6b6b6b;font-size:.9em}
+.warn{color:#8a4b00;background:#fff6e6;padding:.5rem .7rem;border-radius:4px;font-size:.92em}
+.stats{color:#3a3a3a;font-size:.92em}
+.status{font-size:.82em;text-transform:uppercase;letter-spacing:.05em;color:#6b6b6b;margin:.2rem 0 0}
+.status.scouted{color:#2a6b3f}
 @media (prefers-color-scheme:dark){body{color:#e6e4df;background:#16171a}a{color:#7fb3e0}
-code{background:#22242a}.muted{color:#9b9b96}}
+code{background:#22242a}.muted{color:#9b9b96}.warn{color:#e0b070;background:#2a2416}
+.stats{color:#c9c7c2}.status{color:#9b9b96}.status.scouted{color:#8fce9f}}
 """
 
 
 def index_payload() -> dict[str, Any]:
-    """Every corpus workspace and the frozen artifacts it holds."""
+    """Every dataset available to scout, and the frozen artifacts it holds.
+
+    The inventory comes from the read-only datasets root; the artifacts and
+    ledger come from the writable workspace. They are joined on the id, and a
+    workspace entry with no counterpart under the root is still listed — a
+    mount being down must not make a frozen report disappear.
+    """
     root = workspace.workspace_root()
-    corpora: list[dict[str, Any]] = []
+    datasets_root = workspace.datasets_root()
+    summaries, datasets_error = inventory.discover(datasets_root)
+    by_id = {summary.dataset_id: summary.as_record() for summary in summaries}
+
     try:
         directories = sorted(path for path in root.iterdir() if path.is_dir())
     except OSError:
@@ -102,27 +117,51 @@ def index_payload() -> dict[str, Any]:
         if directory.name.startswith("."):
             continue
         try:
-            workspace.validate_corpus_id(directory.name)
+            workspace.validate_dataset_id(directory.name)
         except workspace.WorkspaceError:
             continue
+        record = by_id.get(directory.name) or inventory.WorkspaceOnlyDataset(directory.name).as_record()
         files = sorted(
             path.name
             for path in directory.iterdir()
             if path.is_file() and _SERVABLE_RE.match(path.name)
         )
-        ledger = directory / workspace.LEDGER_FILENAME
-        corpora.append(
+        record.update(
             {
-                "corpus_id": directory.name,
                 "artifacts": [f"/report/{directory.name}/{name}" for name in files],
                 "names": files,
-                "findings_lines": _count_lines(ledger),
+                "findings_lines": _count_lines(directory / workspace.LEDGER_FILENAME),
+                "workspace": True,
             }
         )
-    return {"version": __version__, "workspace": str(root), "corpora_root": str(workspace.corpora_root()), "corpora": corpora}
+        by_id[directory.name] = record
+
+    datasets: list[dict[str, Any]] = []
+    for dataset_id in sorted(by_id):
+        record = by_id[dataset_id]
+        record.setdefault("artifacts", [])
+        record.setdefault("names", [])
+        record.setdefault("findings_lines", 0)
+        record.setdefault("workspace", False)
+        # "Scouted" means something has begun: a frame, a workspace or a
+        # finding. Counting files is not scouting.
+        record["scouted"] = bool(
+            record["workspace"] or record["frame"] or record["artifacts"] or record["findings_lines"]
+        )
+        datasets.append(record)
+
+    return {
+        "version": __version__,
+        "workspace": str(root),
+        "datasets_root": str(datasets_root),
+        "datasets_error": datasets_error,
+        "datasets": datasets,
+    }
 
 
 def index_html(payload: dict[str, Any]) -> str:
+    datasets = payload["datasets"]
+    scouted = sum(1 for dataset in datasets if dataset["scouted"])
     parts = [
         "<!DOCTYPE html><html lang=en><head><meta charset=utf-8>",
         '<meta name=viewport content="width=device-width, initial-scale=1">',
@@ -135,46 +174,95 @@ def index_html(payload: dict[str, Any]) -> str:
         '<meta name="theme-color" content="#1b1d22">',
         '<meta name="apple-mobile-web-app-title" content="data-scout">',
         '<meta name="apple-mobile-web-app-capable" content="yes">',
-        "<title>data-scout reports</title><style>",
+        "<title>data-scout datasets</title><style>",
         _INDEX_CSS,
-        "</style></head><body><h1>data-scout reports</h1>",
+        "</style></head><body><h1>data-scout datasets</h1>",
         f'<p class="muted">workspace <code>{_escape(payload["workspace"])}</code> · '
-        f'corpora <code>{_escape(payload["corpora_root"])}</code> · v{_escape(payload["version"])}</p>',
+        f'datasets <code>{_escape(payload["datasets_root"])}</code> · v{_escape(payload["version"])}</p>',
     ]
-    if not payload["corpora"]:
-        parts.append("<p>No corpus workspaces yet.</p>")
-    for corpus in payload["corpora"]:
-        parts.append(f'<h2>{_escape(corpus["corpus_id"])}</h2>')
-        parts.append(f'<p class="muted">{corpus["findings_lines"]} finding lines</p>')
-        if corpus["names"]:
-            parts.append("<ul>")
-            for name, href in zip(corpus["names"], corpus["artifacts"], strict=False):
-                parts.append(f'<li><a href="{_escape(href)}">{_escape(name)}</a></li>')
-            parts.append("</ul>")
-        else:
-            parts.append("<p class=muted>No rendered artifacts yet.</p>")
+    if payload["datasets_error"]:
+        parts.append(f'<p class="warn">The datasets root is unavailable: {_escape(payload["datasets_error"])}</p>')
+    else:
+        parts.append(
+            f'<p class="muted">{len(datasets)} dataset{"" if len(datasets) == 1 else "s"} · '
+            f'{scouted} scouted · {len(datasets) - scouted} available</p>'
+        )
+    if not datasets:
+        parts.append("<p>No datasets under the datasets root yet.</p>")
+    for dataset in datasets:
+        parts.extend(_dataset_html(dataset))
     parts.append("</body></html>")
     return "".join(parts)
 
 
-def resolve_artifact(path: str) -> Path | None:
-    """Map ``/report/<corpus>/<file>`` to a file on disk, or ``None``.
+def _dataset_html(dataset: dict[str, Any]) -> list[str]:
+    """One dataset: what it is, what it costs to look, and what has been made."""
+    name = dataset["name"]
+    dataset_id = dataset["dataset_id"]
+    parts = [f"<h2>{_escape(name)}"]
+    if name != dataset_id:
+        parts.append(f' <span class="muted">({_escape(dataset_id)})</span>')
+    parts.append("</h2>")
 
-    Two independent checks, both cheap: the corpus component must be a valid
-    corpus id (no separators, no dots-dots), and the filename must match the
+    if not dataset["in_root"]:
+        parts.append(
+            '<p class="warn">Workspace only — this dataset is not under the datasets '
+            "root right now.</p>"
+        )
+    else:
+        facts = [
+            f'{dataset["files"]:,} files',
+            f'{dataset["directories"]:,} dirs',
+            inventory.format_bytes(dataset["bytes"]),
+        ]
+        extensions = inventory.format_extensions(dataset["extensions"])
+        if extensions:
+            facts.append(extensions)
+        if dataset["newest"]:
+            facts.append(f'newest {_escape(dataset["newest"])}')
+        if dataset["truncated"]:
+            facts.append(f'partial — first {inventory.MAX_SCAN_ENTRIES:,} entries')
+        parts.append(f'<p class="stats">{_escape(" · ".join(facts))}</p>')
+
+    if dataset["scouted"]:
+        status = "Scouted"
+        if dataset["findings_lines"]:
+            status += f' · {dataset["findings_lines"]} finding lines'
+    else:
+        status = "Available to scout"
+        if dataset["in_root"] and not dataset["frame"]:
+            status += " · no frame.md yet"
+    status_class = "status scouted" if dataset["scouted"] else "status"
+    parts.append(f'<p class="{status_class}">{_escape(status)}</p>')
+
+    if dataset["names"]:
+        parts.append("<ul>")
+        for label, href in zip(dataset["names"], dataset["artifacts"], strict=False):
+            parts.append(f'<li><a href="{_escape(href)}">{_escape(label)}</a></li>')
+        parts.append("</ul>")
+    else:
+        parts.append('<p class="muted">No reports yet.</p>')
+    return parts
+
+
+def resolve_artifact(path: str) -> Path | None:
+    """Map ``/report/<dataset>/<file>`` to a file on disk, or ``None``.
+
+    Two independent checks, both cheap: the dataset component must be a valid
+    dataset id (no separators, no dots-dots), and the filename must match the
     artifact pattern. There is no path joining of untrusted input beyond that.
     """
     parts = [part for part in path.split("/") if part]
     if len(parts) != 3 or parts[0] != "report":
         return None
-    _, corpus_id, filename = parts
+    _, dataset_id, filename = parts
     try:
-        workspace.validate_corpus_id(corpus_id)
+        workspace.validate_dataset_id(dataset_id)
     except workspace.WorkspaceError:
         return None
     if not _SERVABLE_RE.match(filename):
         return None
-    candidate = workspace.workspace_dir(corpus_id) / filename
+    candidate = workspace.workspace_dir(dataset_id) / filename
     return candidate if candidate.is_file() else None
 
 
@@ -211,9 +299,9 @@ def a2a(request: Request) -> Response:
 
 
 def artifact(request: Request) -> Response:
-    corpus_id = request.path_params["corpus_id"]
+    dataset_id = request.path_params["dataset_id"]
     filename = request.path_params["filename"]
-    found = resolve_artifact(f"/report/{corpus_id}/{filename}")
+    found = resolve_artifact(f"/report/{dataset_id}/{filename}")
     if found is None:
         return _json({"error": "not_found", "path": request.url.path}, status=404)
     return FileResponse(found, media_type="text/html; charset=utf-8")
@@ -251,11 +339,15 @@ def build_app() -> Starlette:
             Route("/report/", index_page),
             Route("/a2a", a2a),
             *[Route(path, icon) for path in _ICONS],
-            Route("/report/{corpus_id}/{filename}", artifact),
+            Route("/report/{dataset_id}/{filename}", artifact),
         ]
     )
     app.router.redirect_slashes = False
     return app
+
+
+def _plural(count: int, noun: str) -> str:
+    return noun if count == 1 else f"{noun}s"
 
 
 def _count_lines(path: Path) -> int:
@@ -288,7 +380,7 @@ def serve(host: str | None = None, port: int | None = None) -> int:
     print(
         f"data-scout {__version__} serving on http://{host}:{port} "
         f"(mcp={MCP_PATH}, belt={len(registry.BELT)}, workspace={workspace.workspace_root()}, "
-        f"corpora={workspace.corpora_root()})",
+        f"datasets={workspace.datasets_root()})",
         flush=True,
     )
     uvicorn.run(build_app(), host=host, port=port, log_level="info")

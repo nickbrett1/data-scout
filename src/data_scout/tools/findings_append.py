@@ -6,8 +6,8 @@ refuses a line that was never decided (``promoted: true`` with a resolvable
 ``script``, or ``promoted: false`` with a ``retire_reason``), so a session that
 did not close cannot be written down.
 
-``ts``, ``corpus_id`` and ``session`` are filled from the environment when the
-record omits them: ``report-render`` sets ``DATA_SCOUT_CORPUS_ID`` and
+``ts``, ``dataset_id`` and ``session`` are filled from the environment when the
+record omits them: ``report-render`` sets ``DATA_SCOUT_DATASET_ID`` and
 ``DATA_SCOUT_SESSION`` for the kernel, so a cell can append a complete line
 without repeating the frame in every call.
 """
@@ -28,7 +28,7 @@ def findings_append(
     record: Mapping[str, Any],
     *,
     ledger_path: str | os.PathLike[str] | None = None,
-    corpus_id: str | None = None,
+    dataset_id: str | None = None,
     session: int | None = None,
 ) -> dict[str, Any]:
     """Append one decided finding line.
@@ -37,8 +37,8 @@ def findings_append(
     """
     payload: dict[str, Any] = dict(record)
     payload.setdefault("ts", utcnow())
-    if "corpus_id" not in payload:
-        payload["corpus_id"] = corpus_id or workspace.current_corpus_id()
+    if "dataset_id" not in payload:
+        payload["dataset_id"] = dataset_id or workspace.current_dataset_id()
     if "session" not in payload:
         resolved_session = session or workspace.current_session()
         if resolved_session is None:
@@ -50,7 +50,7 @@ def findings_append(
         payload["session"] = resolved_session
 
     finding = Finding.model_validate(payload)
-    path = Path(ledger_path) if ledger_path is not None else workspace.ledger_path(finding.corpus_id)
+    path = Path(ledger_path) if ledger_path is not None else workspace.ledger_path(finding.dataset_id)
     line_number = Ledger(path).append(finding)
     return measurement(
         value=1,

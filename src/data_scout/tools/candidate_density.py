@@ -86,11 +86,11 @@ def candidate_density(
     """Candidates per ``per_chars`` characters of text.
 
     ``value`` is the density, ``n`` is the number of characters examined (the
-    denominator, so a caller can weight corpora of different sizes).
+    denominator, so a caller can weight datasets of different sizes).
 
     ``check_dictionary`` costs a ``wordfreq`` lookup per token. Leave it on for
     samples — the phase-5 rule is *sample, then read* — and turn it off only
-    when censusing a corpus exhaustively, recording that in ``params``.
+    when censusing a dataset exhaustively, recording that in ``params``.
     """
     texts = as_texts(source)
     if max_chars is not None:

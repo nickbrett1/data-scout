@@ -1,7 +1,7 @@
 [project]
 name = "data-scout"
 version = "0.1.0"
-description = "Profile unknown unstructured corpora with an agent that authors measurements"
+description = "Profile unknown unstructured datasets with an agent that authors measurements"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

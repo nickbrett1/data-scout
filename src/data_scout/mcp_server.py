@@ -17,8 +17,8 @@ Two rules the façade inherits rather than re-decides:
   message, and the MCP error carries that text verbatim. A tool that returns
   "no clusters" because BERTopic is absent is worse than one that refuses.
 
-Paths given to a path-taking tool must resolve under the corpora root or the
-workspace root. The corpora are mounted read-only and this server never writes,
+Paths given to a path-taking tool must resolve under the datasets root or the
+workspace root. The dataset root is mounted read-only and this server never writes,
 but a network-facing tool should not be a way to read ``/etc`` from a client.
 """
 
@@ -78,12 +78,12 @@ def _deliberate(fn):
 def _guard(value: str, *, what: str = "path") -> Path:
     """Refuse a path that resolves outside both roots, naming both roots."""
     resolved = Path(value).expanduser().resolve()
-    allowed = (workspace.corpora_root().resolve(), workspace.workspace_root().resolve())
+    allowed = (workspace.datasets_root().resolve(), workspace.workspace_root().resolve())
     for root in allowed:
         if resolved == root or root in resolved.parents:
             return resolved
     raise ValueError(
-        f"{what} {value!r} is outside both roots. The corpora root is "
+        f"{what} {value!r} is outside both roots. The datasets root is "
         f"{allowed[0]} and the workspace root is {allowed[1]}; pass a path under one "
         "of them. This server does not read the rest of the filesystem."
     )
@@ -96,7 +96,7 @@ def build_server() -> MCPServer:
         title="data-scout",
         version=__version__,
         instructions=(
-            "Instruments for profiling an unfamiliar corpus. Each tool returns "
+            "Instruments for profiling an unfamiliar dataset. Each tool returns "
             "{value, n, unit_notes} plus named detail fields; read the named "
             "fields rather than the prose. Nothing here writes a finding: a call "
             "measures, and a separate findings_append records what a human or a "
@@ -212,7 +212,7 @@ def build_server() -> MCPServer:
     @server.tool(name="image_inventory")
     @_deliberate
     def image_inventory_tool(path: str, model: str | None = None, threshold: float = 0.25) -> dict[str, Any]:
-        """Zero-shot probe of what a corpus's images are, in one shared space.
+        """Zero-shot probe of what a dataset's images are, in one shared space.
 
         Needs a multimodal embedder (DATA_SCOUT_VISION_EMBED_MODEL) and the
         gateway; fails loudly without both.
@@ -276,9 +276,9 @@ def build_server() -> MCPServer:
         group: str | None = None,
         validated_only: bool = False,
     ) -> dict[str, Any]:
-        """The registry: what each instrument is, and which corpus trusted its number.
+        """The registry: what each instrument is, and which dataset trusted its number.
 
-        `validated_on` is corpus ids where the number has been read and trusted —
+        `validated_on` is dataset ids where the number has been read and trusted —
         not "works". An empty list means built and untrusted, which is the honest
         state of a new belt.
         """

@@ -87,7 +87,7 @@ def mtld(words: list[str], *, threshold: float = 0.72) -> float:
     """Measure of Textual Lexical Diversity — length-invariant, unlike TTR.
 
     Standard forward+reverse mean, which is what ``textdescriptives`` reports
-    and what a corpus comparison needs: raw type/token ratio falls with length,
+    and what a dataset comparison needs: raw type/token ratio falls with length,
     so it cannot compare a 200-word page with a 200,000-word book.
     """
     if len(words) < 10:

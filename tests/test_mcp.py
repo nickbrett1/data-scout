@@ -61,7 +61,7 @@ def test_measurement_register_is_callable_through_the_facade(mcp):
 
 
 @pytest.fixture
-def live_mcp(corpus_workspace):
+def live_mcp(dataset_workspace):
     import uvicorn
 
     from data_scout.__main__ import build_app
@@ -119,7 +119,7 @@ def test_over_the_wire_a_path_outside_the_roots_is_an_error_naming_both_roots(li
     result = run_session(live_mcp, scenario)
     assert result.is_error
     message = text_of(result)
-    assert str(roots.corpora) in message
+    assert str(roots.datasets) in message
     assert str(roots.workspace) in message
 
 
@@ -139,7 +139,7 @@ def test_over_the_wire_the_ledger_refuses_an_undecided_line(live_mcp):
             "findings_append",
             {
                 "record": {
-                    "corpus_id": "demo-corpus",
+                    "dataset_id": "demo-dataset",
                     "session": 1,
                     "unit": "documents",
                     "tool": "file_census",
@@ -158,13 +158,13 @@ def test_over_the_wire_the_ledger_refuses_an_undecided_line(live_mcp):
     assert "script" in text_of(result).lower()
 
 
-def test_over_the_wire_a_decided_line_lands_in_the_workspace_ledger(live_mcp, corpus_workspace):
+def test_over_the_wire_a_decided_line_lands_in_the_workspace_ledger(live_mcp, dataset_workspace):
     async def scenario(session):
         return await session.call_tool(
             "findings_append",
             {
                 "record": {
-                    "corpus_id": "demo-corpus",
+                    "dataset_id": "demo-dataset",
                     "session": 1,
                     "unit": "documents",
                     "tool": "file_census",
@@ -183,7 +183,7 @@ def test_over_the_wire_a_decided_line_lands_in_the_workspace_ledger(live_mcp, co
     assert not result.is_error, text_of(result)
     lines = [
         line
-        for line in (corpus_workspace / "findings.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (dataset_workspace / "findings.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
     assert len(lines) == 1

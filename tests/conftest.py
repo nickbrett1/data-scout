@@ -1,7 +1,7 @@
-"""Shared fixtures: two isolated roots, and one small corpus to measure.
+"""Shared fixtures: two isolated roots, and one small dataset to measure.
 
-Every test runs against a throwaway corpora root and workspace, so no test can
-touch a real corpus and no test depends on one being mounted. The environment is
+Every test runs against a throwaway datasets root and workspace, so no test can
+touch a real dataset and no test depends on one being mounted. The environment is
 patched rather than the code being told, because the code reads the environment —
 that is the contract (``data-scout-convention`` §8).
 """
@@ -24,47 +24,47 @@ PROSE = (
     "length of the pier twice before he would speak to anyone at all."
 )
 
-CORPUS_ID = "demo-corpus"
+DATASET_ID = "demo-dataset"
 
 
 @dataclass
 class Roots:
     tmp: Path
-    corpora: Path
+    datasets: Path
     workspace: Path
 
-    def corpus(self, corpus_id: str = CORPUS_ID) -> Path:
-        return self.corpora / corpus_id
+    def dataset(self, dataset_id: str = DATASET_ID) -> Path:
+        return self.datasets / dataset_id
 
 
 @pytest.fixture(autouse=True)
 def roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Roots:
     """Isolate both roots, and make the optional services absent by default."""
-    corpora = tmp_path / "corpora"
+    datasets = tmp_path / "datasets"
     ws = tmp_path / "workspace"
-    corpora.mkdir()
+    datasets.mkdir()
     ws.mkdir()
-    monkeypatch.setenv(workspace.CORPORA_ROOT_ENV, str(corpora))
+    monkeypatch.setenv(workspace.DATASETS_ROOT_ENV, str(datasets))
     monkeypatch.setenv(workspace.WORKSPACE_ENV, str(ws))
-    monkeypatch.setenv(workspace.CORPUS_ID_ENV, CORPUS_ID)
+    monkeypatch.setenv(workspace.DATASET_ID_ENV, DATASET_ID)
     monkeypatch.setenv(workspace.SESSION_ENV, "1")
-    monkeypatch.setenv("DATA_SCOUT_CACHE_DIR", str(ws / CORPUS_ID / "cache"))
+    monkeypatch.setenv("DATA_SCOUT_CACHE_DIR", str(ws / DATASET_ID / "cache"))
     # Tier-2 services are absent unless a test says otherwise: a suite that
     # silently spends money because a developer happened to export a key is a
     # suite nobody runs twice.
     for name in ("DOCLING_URL", "LITELLM_BASE_URL", "LITELLM_API_KEY", "DATA_SCOUT_EMBED_MODEL", "DATA_SCOUT_VISION_EMBED_MODEL"):
         monkeypatch.delenv(name, raising=False)
-    return Roots(tmp=tmp_path, corpora=corpora, workspace=ws)
+    return Roots(tmp=tmp_path, datasets=datasets, workspace=ws)
 
 
 @pytest.fixture
-def corpus(roots: Roots) -> Path:
-    """A profiled corpus: a directory with a ``frame.md`` that names itself."""
-    directory = roots.corpus()
+def dataset(roots: Roots) -> Path:
+    """A profiled dataset: a directory with a ``frame.md`` that names itself."""
+    directory = roots.dataset()
     directory.mkdir(parents=True, exist_ok=True)
     (directory / workspace.FRAME_FILENAME).write_text(
         f"""---
-corpus_id: {CORPUS_ID}
+dataset_id: {DATASET_ID}
 unit: file
 lenses:
   - text
@@ -73,9 +73,9 @@ tier_ceiling: 1
 created: 2026-10-26
 ---
 
-# {CORPUS_ID}
+# {DATASET_ID}
 
-A two-file test corpus.
+A two-file test dataset.
 """,
         encoding="utf-8",
     )
@@ -85,8 +85,8 @@ A two-file test corpus.
 
 
 @pytest.fixture
-def corpus_workspace(roots: Roots) -> Path:
-    return workspace.ensure_workspace(CORPUS_ID)
+def dataset_workspace(roots: Roots) -> Path:
+    return workspace.ensure_workspace(DATASET_ID)
 
 
 def not_installed(module: str) -> bool:

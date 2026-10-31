@@ -66,7 +66,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
     HOME="/home/app" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    DATA_SCOUT_CORPORA_ROOT="/corpora"
+    DATA_SCOUT_DATASETS_ROOT="/datasets"
 
 COPY --from=build /opt/venv /opt/venv
 COPY . .

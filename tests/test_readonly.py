@@ -1,4 +1,4 @@
-"""A data-scout run cannot modify the corpus. Asserted two ways.
+"""A data-scout run cannot modify the dataset. Asserted two ways.
 
 The mount gives the guarantee in production; these tests state it as the
 convention does — as the **absence** of a write handle, plus a live attempt that
@@ -21,7 +21,7 @@ TOOLS_DIR = Path(__file__).resolve().parents[1] / "src" / "data_scout" / "tools"
 #: The only modules allowed to open anything for writing, and why:
 #: ``findings_append`` appends to the workspace ledger, ``sample`` writes the
 #: reproducibility anchor into ``samples/``. Both write inside the workspace
-#: only; neither can reach the corpus.
+#: only; neither can reach the dataset.
 _WRITE_ALLOWED = {"findings_append.py", "sample.py"}
 
 
@@ -43,7 +43,7 @@ def _write_modes(path: Path) -> list[str]:
     return found
 
 
-def test_no_tool_opens_the_corpus_for_writing():
+def test_no_tool_opens_the_dataset_for_writing():
     offenders: dict[str, list[str]] = {}
     for path in sorted(TOOLS_DIR.glob("*.py")):
         if path.name in _WRITE_ALLOWED:
@@ -54,37 +54,37 @@ def test_no_tool_opens_the_corpus_for_writing():
     assert offenders == {}, f"tools must not open anything for writing: {offenders}"
 
 
-def test_the_two_writers_write_only_inside_the_workspace(corpus_workspace):
+def test_the_two_writers_write_only_inside_the_workspace(dataset_workspace):
     """``findings_append`` and the sample anchor both resolve under the workspace."""
     from data_scout import workspace
 
-    ledger = workspace.ledger_path("demo-corpus")
-    samples = workspace.samples_dir("demo-corpus")
+    ledger = workspace.ledger_path("demo-dataset")
+    samples = workspace.samples_dir("demo-dataset")
     root = workspace.workspace_root()
     assert ledger.is_relative_to(root)
     assert samples.is_relative_to(root)
-    assert not str(ledger).startswith(str(workspace.corpora_root()))
+    assert not str(ledger).startswith(str(workspace.datasets_root()))
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores mode bits; the mount is the real guarantee")
-def test_a_write_to_a_read_only_corpus_fails_with_a_permission_error(corpus):
-    corpus.chmod(0o555)
+def test_a_write_to_a_read_only_dataset_fails_with_a_permission_error(dataset):
+    dataset.chmod(0o555)
     try:
         with pytest.raises(PermissionError):
-            (corpus / "should-not-exist.txt").write_text("nope", encoding="utf-8")
+            (dataset / "should-not-exist.txt").write_text("nope", encoding="utf-8")
         # And the instruments still read it. The measurement half is skipped where
         # `file` is absent (CI's build step has no apt belt), but the permission
         # assertion above is the point of the test and always runs.
         if shutil.which("file") is None:
             pytest.skip("`file` is not installed here, so the read half cannot be demonstrated")
-        result = file_census(corpus)
+        result = file_census(dataset)
         assert result["n"] >= 2
     finally:
-        corpus.chmod(0o755)
+        dataset.chmod(0o755)
 
 
-def test_measuring_a_read_only_file_needs_no_write_handle(corpus):
-    target = corpus / "one.txt"
+def test_measuring_a_read_only_file_needs_no_write_handle(dataset):
+    target = dataset / "one.txt"
     target.chmod(0o444)
     try:
         result = text_quality(target, include_textdescriptives=False)

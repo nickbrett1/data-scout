@@ -14,7 +14,7 @@ from data_scout.tools import findings_append
 
 def record(**overrides):
     payload = {
-        "corpus_id": "demo-corpus",
+        "dataset_id": "demo-dataset",
         "session": 1,
         "unit": "file",
         "tool": "candidate_density",
@@ -52,7 +52,7 @@ def test_unpromoted_with_a_reason_is_a_deliberate_one_off():
         record(
             promoted=False,
             script=None,
-            retire_reason="one-off: PDF page geometry is not corpus-agnostic",
+            retire_reason="one-off: PDF page geometry is not dataset-agnostic",
         )
     )
     assert finding.promoted is False
@@ -98,7 +98,7 @@ def test_verify_catches_a_hand_edited_line(tmp_path):
     ledger = Ledger(path)
     ledger.append(Finding.model_validate(record()))
     with path.open("a", encoding="utf-8") as handle:
-        handle.write('{"corpus_id":"demo-corpus"}\n')
+        handle.write('{"dataset_id":"demo-dataset"}\n')
     problems = ledger.verify()
     assert len(problems) == 1
     assert problems[0].startswith("line 2")
@@ -108,7 +108,7 @@ def test_an_absent_ledger_is_an_empty_ledger(tmp_path):
     assert Ledger(tmp_path / "nothing.jsonl").lines() == []
 
 
-def test_findings_append_fills_the_environment_stamp(corpus_workspace):
+def test_findings_append_fills_the_environment_stamp(dataset_workspace):
     result = findings_append(
         {
             "unit": "file",
@@ -117,17 +117,17 @@ def test_findings_append_fills_the_environment_stamp(corpus_workspace):
             "value": 0.9,
             "n": 10,
             "promoted": False,
-            "retire_reason": "one-off: the corpus was two files",
+            "retire_reason": "one-off: the dataset was two files",
         }
     )
     assert result["value"] == 1
     line = json.loads(Path(result["ledger"]).read_text(encoding="utf-8").strip())
-    assert line["corpus_id"] == "demo-corpus"
+    assert line["dataset_id"] == "demo-dataset"
     assert line["session"] == 1
     assert line["ts"].endswith("Z")
 
 
-def test_findings_append_without_a_session_fails_loudly(corpus_workspace, monkeypatch):
+def test_findings_append_without_a_session_fails_loudly(dataset_workspace, monkeypatch):
     monkeypatch.delenv("DATA_SCOUT_SESSION")
     payload = record()
     payload.pop("session")

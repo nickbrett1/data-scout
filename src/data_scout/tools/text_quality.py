@@ -3,7 +3,7 @@
 Tier 1, pure, free. Five cheap signals, all of them local:
 
 * **dictionary hit rate** (``wordfreq``) — the headline, because "these are
-  words" is the question an unknown corpus actually raises;
+  words" is the question an unknown dataset actually raises;
 * **character entropy** — 4.0–4.8 bits/char is prose, 6+ is base64 or a font
   dump, under 3 is a repeated template;
 * **non-alpha ratio** — the cheapest OCR-noise signal there is;

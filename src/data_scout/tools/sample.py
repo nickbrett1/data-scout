@@ -2,7 +2,7 @@
 
 Every finding line carries ``n`` and ``sample``, and design §10 names
 "sampling theatre" as a standing risk: the agent will happily report a sample
-number as a corpus number. A seeded, recorded draw is the only defence, so
+number as a dataset number. A seeded, recorded draw is the only defence, so
 **the rig is a tool, not a habit** — nothing that draws a sample should be
 hand-written in a cell.
 
@@ -133,7 +133,7 @@ def sample(
 def write_sample_anchor(
     result: dict[str, Any],
     *,
-    corpus_id: str | None = None,
+    dataset_id: str | None = None,
     session: int | None = None,
     directory: str | os.PathLike[str] | None = None,
 ) -> Path:
@@ -143,12 +143,12 @@ def write_sample_anchor(
     the ids and the rule travel with the seed. Writing it is a workspace write,
     which is the only kind of write this project does.
     """
-    corpus_id = corpus_id or workspace.current_corpus_id()
+    dataset_id = dataset_id or workspace.current_dataset_id()
     session = session or workspace.current_session() or 1
-    target_dir = Path(directory) if directory is not None else workspace.samples_dir(corpus_id)
+    target_dir = Path(directory) if directory is not None else workspace.samples_dir(dataset_id)
     target_dir.mkdir(parents=True, exist_ok=True)
     payload = {
-        "corpus_id": corpus_id,
+        "dataset_id": dataset_id,
         "session": session,
         "seed": result.get("seed"),
         "rule": result.get("rule"),
