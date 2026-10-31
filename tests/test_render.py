@@ -85,6 +85,39 @@ def test_a_render_executes_verifies_and_writes_both_renditions(dataset_workspace
     assert "prefers-color-scheme" in report_html.read_text(encoding="utf-8")
 
 
+def test_a_correct_render_is_visible_to_the_report_index(dataset_workspace, capsys):
+    """Writer and reader share one location rule, so the HTML cannot be orphaned.
+
+    This is the defect measured on ryzen: exit 0, gate passed, 337 KB of real
+    HTML written to ``notebooks/``, and ``/report/`` returned 404 with
+    ``artifacts: []``. The test asserts both the location and the reader.
+    """
+    from data_scout import __main__ as app
+
+    notebook_path = build_session(dataset_workspace, cells=[APPEND_CELL])
+    assert render.main([DATASET_ID, "--quiet"]) == 0, capsys.readouterr().err
+
+    canonical = workspace.artifact_path(DATASET_ID, "session-1.html")
+    assert canonical == workspace.notebook_dir(DATASET_ID) / "session-1.html"
+    assert notebook_path.with_suffix(".html") == canonical
+    assert canonical.is_file()
+
+    record = next(
+        item for item in app.index_payload()["datasets"] if item["dataset_id"] == DATASET_ID
+    )
+    assert record["names"] == ["session-1.html"]
+    assert record["artifacts"] == [f"/report/{DATASET_ID}/session-1.html"]
+    assert app.resolve_artifact(f"/report/{DATASET_ID}/session-1.html") == canonical
+
+
+def test_the_render_reports_the_lines_this_run_appended(dataset_workspace, capsys):
+    """``before`` is sampled before execution; sampling after always printed 0."""
+    build_session(dataset_workspace, cells=[APPEND_CELL])
+
+    assert render.main([DATASET_ID, "--quiet"]) == 0
+    assert "1 appended by this render" in capsys.readouterr().out
+
+
 def test_the_render_stamps_the_kernelspec(dataset_workspace, capsys):
     """Without it the first thing a person sees is a 'Select Kernel' prompt."""
     notebook_path = build_session(dataset_workspace, cells=[APPEND_CELL])

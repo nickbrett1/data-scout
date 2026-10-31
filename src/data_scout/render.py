@@ -348,6 +348,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         scratch_workspace(dataset_ws, destination=scratch_root / dataset_id)
 
+        # Sampled BEFORE the artifact execution: the lines this render appends
+        # are the difference between here and ``live_after``. Sampling it after
+        # execution made ``added`` arithmetically always 0.
+        before = ledger.lines()
+
         # --- 1+2. execute for the artifact ---------------------------------
         print("report-render: executing for the artifact")
         executed = execute_notebook(
@@ -372,7 +377,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         # --- 3b. re-execute into the scratch copy and diff ------------------
         print("report-render: re-executing into a scratch workspace for the diff")
-        before = ledger.lines()
         verification = execute_notebook(
             notebook_path,
             workspace_root=scratch_root,
@@ -419,7 +423,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         # --- 5. render ------------------------------------------------------
         rendered: list[Path] = []
-        session_html = notebook_path.with_suffix(".html")
+        # One location rule, shared with the `/report/` reader. A session's HTML
+        # is the evidence appendix and lives under `notebooks/` with its
+        # notebook; writing it beside the notebook by `with_suffix` was the
+        # defect that hid every correct render from the index.
+        session_html = workspace.artifact_path(
+            dataset_id, notebook_path.with_suffix(".html").name
+        )
         session_html.write_text(
             render_notebook(
                 executed,
@@ -434,7 +444,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if report_path is None:
             print("report-render: no report-*.md in the workspace; nothing to render for the deliverable")
         else:
-            report_html = report_path.with_suffix(".html")
+            # A report is the deliverable and lives at the dataset root, even if
+            # `--report` named it from somewhere else on disk.
+            report_html = workspace.artifact_path(
+                dataset_id, report_path.with_suffix(".html").name
+            )
             report_html.write_text(
                 render_markdown(
                     report_path.read_text(encoding="utf-8"),

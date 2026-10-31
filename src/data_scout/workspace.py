@@ -52,6 +52,14 @@ WORKSPACE_SUBDIRS = ("notebooks", "scratch", "samples", "cache", "staging")
 
 _DATASET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
+#: A rendered artifact is one of two things, and they do **not** share a
+#: directory: the deliverable (``report-*``) sits at the dataset root beside
+#: ``frame.md``/``findings.jsonl``, while the evidence appendix (``session-*``)
+#: sits with its notebook under ``notebooks/`` (convention §1, §4.1). The
+#: pattern lives here, beside :func:`artifact_path`, so the writer and the HTTP
+#: reader share one definition of "servable" as well as one definition of where.
+SERVABLE_ARTIFACT_RE = re.compile(r"^(report|session)-[A-Za-z0-9._-]*\.html$")
+
 
 class WorkspaceError(RuntimeError):
     """Base class for workspace and frame errors."""
@@ -358,6 +366,58 @@ def ensure_workspace(dataset_id: str) -> Path:
 
 def notebook_dir(dataset_id: str) -> Path:
     return workspace_dir(dataset_id) / "notebooks"
+
+
+def artifact_kind(filename: str) -> str | None:
+    """``"report"``, ``"session"``, or ``None`` if the name is not an artifact."""
+    match = SERVABLE_ARTIFACT_RE.fullmatch(filename)
+    return match.group(1) if match else None
+
+
+def artifact_dir(dataset_id: str, kind: str) -> Path:
+    """The **one** place a rendered artifact's directory is decided.
+
+    ``report-*.html`` is the deliverable and lives at the dataset root beside
+    ``frame.md`` and ``findings.jsonl``; ``session-*.html`` is the evidence
+    appendix and lives with its notebook under ``notebooks/``
+    (convention §1 and §4.1). Both the writer (``render``) and the reader
+    (``__main__``, for ``/report/``) call this, so a correct render cannot be
+    invisible to the index by construction.
+    """
+    if kind == "report":
+        return workspace_dir(dataset_id)
+    if kind == "session":
+        return notebook_dir(dataset_id)
+    raise WorkspaceError(f"unknown artifact kind {kind!r}; expected 'report' or 'session'")
+
+
+def artifact_path(dataset_id: str, filename: str) -> Path:
+    """Resolve one servable artifact name through :func:`artifact_dir`."""
+    kind = artifact_kind(filename)
+    if kind is None:
+        raise WorkspaceError(
+            f"{filename!r} is not a servable artifact: expected report-*.html or "
+            "session-*.html"
+        )
+    return artifact_dir(dataset_id, kind) / filename
+
+
+def artifact_paths(dataset_id: str) -> list[Path]:
+    """Every rendered artifact that exists, in the convention's two locations.
+
+    A missing directory is an empty set, not an error: a workspace that has
+    never rendered anything is a normal state, not a broken one.
+    """
+    found: list[Path] = []
+    for kind in ("report", "session"):
+        try:
+            entries = sorted(artifact_dir(dataset_id, kind).iterdir())
+        except OSError:
+            continue
+        found.extend(
+            path for path in entries if path.is_file() and artifact_kind(path.name) == kind
+        )
+    return found
 
 
 def scratch_dir(dataset_id: str) -> Path:

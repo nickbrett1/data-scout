@@ -59,6 +59,37 @@ def test_the_ledger_and_cache_live_in_the_workspace_not_the_dataset(roots, datas
     assert workspace.cache_dir(DATASET_ID).parent == roots.workspace / DATASET_ID
 
 
+def test_an_artifact_has_one_location_and_it_follows_the_convention(roots):
+    """Report at the root; session HTML with its notebook under ``notebooks/``.
+
+    This is the writer/reader contract as a test: ``report-render`` and the
+    ``/report/`` index both resolve through this function.
+    """
+    report = workspace.artifact_path(DATASET_ID, "report-2026-10-31.html")
+    session = workspace.artifact_path(DATASET_ID, "session-1.html")
+
+    assert report.parent == roots.workspace / DATASET_ID
+    assert session.parent == roots.workspace / DATASET_ID / "notebooks"
+    assert report.name == "report-2026-10-31.html"
+    assert session.name == "session-1.html"
+    assert workspace.artifact_kind("report-2026-10-31.html") == "report"
+    assert workspace.artifact_kind("session-1.html") == "session"
+    assert workspace.artifact_kind("findings.jsonl") is None
+    with pytest.raises(workspace.WorkspaceError):
+        workspace.artifact_path(DATASET_ID, "findings.jsonl")
+
+
+def test_artifact_paths_finds_both_locations_and_ignores_everything_else(dataset_workspace):
+    (dataset_workspace / "report-2026-10-31.html").write_text("r", encoding="utf-8")
+    (dataset_workspace / "frame.md").write_text("not an artifact", encoding="utf-8")
+    notebooks = dataset_workspace / "notebooks"
+    (notebooks / "session-1.html").write_text("s", encoding="utf-8")
+    (notebooks / "session-1.ipynb").write_text("{}", encoding="utf-8")
+
+    names = [path.name for path in workspace.artifact_paths(DATASET_ID)]
+    assert names == ["report-2026-10-31.html", "session-1.html"]
+
+
 def test_an_unset_dataset_id_is_refused_rather_than_guessed(monkeypatch):
     monkeypatch.delenv(workspace.DATASET_ID_ENV)
     with pytest.raises(workspace.NotScoped):

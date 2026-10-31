@@ -37,7 +37,6 @@ workspace it already owns.
 from __future__ import annotations
 
 import os
-import re
 from pathlib import Path
 from typing import Any
 
@@ -53,8 +52,6 @@ HOST_ENV = "DATA_SCOUT_HTTP_HOST"
 PORT_ENV = "DATA_SCOUT_HTTP_PORT"
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8710
-
-_SERVABLE_RE = re.compile(r"^(report|session)-[A-Za-z0-9._-]*\.html$")
 
 # Named routes rather than a static directory: three known files, no path input.
 _ICONS = {
@@ -122,11 +119,9 @@ def index_payload() -> dict[str, Any]:
         except workspace.WorkspaceError:
             continue
         record = by_id.get(directory.name) or inventory.WorkspaceOnlyDataset(directory.name).as_record()
-        files = sorted(
-            path.name
-            for path in directory.iterdir()
-            if path.is_file() and _SERVABLE_RE.match(path.name)
-        )
+        # The writer and the reader must not each know a location: ask the one
+        # function that owns the convention's two directories.
+        files = [path.name for path in workspace.artifact_paths(directory.name)]
         record.update(
             {
                 "artifacts": [f"/report/{directory.name}/{name}" for name in files],
@@ -259,8 +254,9 @@ def resolve_artifact(path: str) -> Path | None:
     """Map ``/report/<dataset>/<file>`` to a file on disk, or ``None``.
 
     Two independent checks, both cheap: the dataset component must be a valid
-    dataset id (no separators, no dots-dots), and the filename must match the
-    artifact pattern. There is no path joining of untrusted input beyond that.
+    dataset id (no separators, no dots-dots), and the filename must resolve
+    through :func:`workspace.artifact_path` — the same rule the writer uses.
+    There is no path joining of untrusted input beyond that.
     """
     parts = [part for part in path.split("/") if part]
     if len(parts) != 3 or parts[0] != "report":
@@ -268,11 +264,9 @@ def resolve_artifact(path: str) -> Path | None:
     _, dataset_id, filename = parts
     try:
         workspace.validate_dataset_id(dataset_id)
+        candidate = workspace.artifact_path(dataset_id, filename)
     except workspace.WorkspaceError:
         return None
-    if not _SERVABLE_RE.match(filename):
-        return None
-    candidate = workspace.workspace_dir(dataset_id) / filename
     return candidate if candidate.is_file() else None
 
 

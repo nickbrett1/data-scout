@@ -26,6 +26,11 @@ def server(dataset_workspace):
     import uvicorn
 
     (dataset_workspace / "report-2026-10-26.html").write_text("<html>report</html>", encoding="utf-8")
+    # A session's evidence appendix lives with its notebook, one level below the
+    # root. The reader must still find it, because the writer says so.
+    (workspace.notebook_dir(DATASET_ID) / "session-1.html").write_text(
+        "<html>session</html>", encoding="utf-8"
+    )
     (dataset_workspace / "findings.jsonl").write_text('{"a":1}\n{"b":2}\n', encoding="utf-8")
 
     sock = socket.socket()
@@ -101,6 +106,7 @@ def test_the_index_lists_the_frozen_artifacts(server):
     assert status == 200
     assert DATASET_ID in body
     assert "report-2026-10-26.html" in body
+    assert "session-1.html" in body
     assert "2 finding lines" in body
 
 
@@ -111,6 +117,11 @@ def test_index_json_is_the_same_index_for_machines(server):
     assert payload["datasets"][0]["dataset_id"] == DATASET_ID
     assert payload["datasets"][0]["findings_lines"] == 2
     assert payload["datasets"][0]["scouted"] is True
+    assert payload["datasets"][0]["names"] == ["report-2026-10-26.html", "session-1.html"]
+    assert payload["datasets"][0]["artifacts"] == [
+        f"/report/{DATASET_ID}/report-2026-10-26.html",
+        f"/report/{DATASET_ID}/session-1.html",
+    ]
 
 
 def test_the_index_reports_every_frame_schema_the_ledger_holds(server, dataset_workspace):
@@ -185,6 +196,18 @@ def test_a_frozen_artifact_is_served(server):
     assert status == 200
     assert content_type.startswith("text/html")
     assert body == "<html>report</html>"
+
+
+def test_a_session_html_is_served_from_its_notebook_directory(server):
+    """The measured defect: a correct render at `notebooks/session-1.html` was 404.
+
+    The URL stays flat (``/report/<dataset>/<file>``); only the on-disk
+    directory differs, and it is now resolved by the same rule the writer uses.
+    """
+    status, content_type, body = get(server, f"/report/{DATASET_ID}/session-1.html")
+    assert status == 200
+    assert content_type.startswith("text/html")
+    assert body == "<html>session</html>"
 
 
 def test_a_head_request_has_no_body(server):
