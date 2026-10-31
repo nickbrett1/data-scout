@@ -96,7 +96,14 @@ def validate_dataset_id(dataset_id: str) -> str:
 
 
 def dataset_path(dataset_id: str) -> Path:
-    """Resolve ``dataset_id`` under the datasets root, or fail naming the root."""
+    """Resolve ``dataset_id`` under the datasets root, or fail naming the root.
+
+    This answers exactly one question — *does this dataset exist on the mount* —
+    and deliberately says nothing about frames. The frame is state and lives in
+    the workspace (:func:`frame_path`); a path resolver that also asserted where
+    a frame must be is what let two modules answer "where is the frame" with two
+    different rules.
+    """
     validate_dataset_id(dataset_id)
     root = datasets_root()
     path = root / dataset_id
@@ -105,11 +112,6 @@ def dataset_path(dataset_id: str) -> Path:
             f"dataset id {dataset_id!r} does not exist under the resolved datasets "
             f"root {root} (from {DATASETS_ROOT_ENV}). Check the mount, or the id: "
             f"the ids present are {sorted(_visible_dirs(root)) or 'none'}"
-        )
-    if not (path / FRAME_FILENAME).is_file():
-        raise DatasetUnprofiled(
-            f"dataset {dataset_id!r} at {path} has no {FRAME_FILENAME}: it is "
-            "unprofiled and must not be profiled under an inferred id"
         )
     return path
 
@@ -193,8 +195,12 @@ def read_frame(dataset_id: str) -> Frame:
     ids for one directory is exactly the "wrong number with a stamp" the ledger
     exists to prevent.
     """
-    directory = dataset_path(dataset_id)
-    frame_file = directory / FRAME_FILENAME
+    frame_file = frame_path(dataset_id)
+    if not frame_file.is_file():
+        raise DatasetUnprofiled(
+            f"dataset {dataset_id!r} has no {FRAME_FILENAME} at {frame_file}: it is "
+            "unprofiled and must not be profiled under an inferred id"
+        )
     raw = frame_file.read_text(encoding="utf-8", errors="replace")
     meta: dict[str, Any] = {}
     match = _FRONTMATTER_RE.match(raw)
@@ -222,7 +228,7 @@ def read_frame(dataset_id: str) -> Frame:
     ceiling = meta.get("tier_ceiling")
     return Frame(
         dataset_id=declared,
-        path=directory,
+        path=frame_file.parent,
         raw=raw,
         path_hint=meta.get("path"),
         lenses=tuple(str(item) for item in lenses),
@@ -242,6 +248,18 @@ def workspace_dir(dataset_id: str) -> Path:
     """The per-dataset workspace directory. Not created here."""
     validate_dataset_id(dataset_id)
     return workspace_root() / dataset_id
+
+
+def frame_path(dataset_id: str) -> Path:
+    """The **one** place the dataset frame's location is decided.
+
+    The frame is state, so it lives under the writable workspace at
+    ``workspace/<dataset-id>/frame.md`` (convention §1) — never inside the
+    dataset, which is mounted read-only by design. Every caller that asks where
+    a frame is (``read_frame``, the inventory's ``frame`` flag and its title)
+    goes through here so the two answers cannot drift apart again.
+    """
+    return workspace_dir(dataset_id) / FRAME_FILENAME
 
 
 def ensure_workspace(dataset_id: str) -> Path:

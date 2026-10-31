@@ -66,6 +66,9 @@ def file_census(
     mistaken for a complete one.
     """
     files = list(iter_files(path, limit=max_files))
+    # Resolve the instrument before interpreting an empty walk: "no files" and
+    # "no `file` binary" are the same number and opposite facts (item 2's class).
+    require_binary("file_census", "file", package="file (with libmagic1)")
     if not files:
         return measurement(
             value=0.0,

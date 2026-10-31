@@ -32,11 +32,18 @@ _IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".heic", ".webp", "
 
 
 def _empty_census() -> dict[str, Any]:
-    """No images is a measurement of zero, not a failed instrument."""
+    """No images is a measurement of zero, not a failed instrument.
+
+    Only reached *after* ``exiftool`` has been resolved, so the zero is a fact
+    about the tree and ``exiftool_available`` says so. "No images" and "no
+    exiftool" are the same number and opposite facts; this field keeps them
+    distinguishable.
+    """
     return measurement(
         value=0.0,
         n=0,
         unit_notes="share of images carrying camera metadata",
+        exiftool_available=True,
         photographic_share=0.0,
         by_make={},
         by_model={},
@@ -106,6 +113,10 @@ def exif_census(
     Make or Model. ``n`` is the number of files exiftool reported on.
     """
     target = Path(path)
+    # Resolve the instrument *before* deciding the tree holds no images. A
+    # short-circuit here made a container built without exiftool report a clean
+    # census over a directory full of images (item 2).
+    require_binary("exif_census", "exiftool", package="libimage-exiftool-perl")
     if target.is_dir() and not any(iter_files(target, suffixes=_IMAGE_SUFFIXES, limit=1)):
         return _empty_census()
     if target.is_dir():
@@ -175,6 +186,7 @@ def exif_census(
         value=share(photographic, len(records)),
         n=len(records),
         unit_notes="share of images carrying camera metadata",
+        exiftool_available=True,
         photographic_share=share(photographic, len(records)),
         with_camera_metadata=photographic,
         without_camera_metadata=len(records) - photographic,

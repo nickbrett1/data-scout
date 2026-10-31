@@ -33,9 +33,10 @@ def test_a_summary_counts_files_directories_bytes_and_extensions(roots):
     assert summary.newest is not None
 
 
-def test_the_frame_heading_becomes_the_display_name(roots):
+def test_the_frame_heading_becomes_the_display_name(roots, dataset_workspace):
     directory = make_dataset(roots.datasets)
-    (directory / "frame.md").write_text("# Harbour Archive\n\nnotes\n", encoding="utf-8")
+    # The frame is state: it lives in the workspace, never in the read-only dataset.
+    (dataset_workspace / "frame.md").write_text("# Harbour Archive\n\nnotes\n", encoding="utf-8")
 
     summary = inventory.summarize("demo-dataset", directory)
 

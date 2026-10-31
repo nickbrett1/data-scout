@@ -31,9 +31,9 @@ from pathlib import Path
 from typing import Any
 
 from data_scout.workspace import (
-    FRAME_FILENAME,
     WorkspaceError,
     datasets_root,
+    frame_path,
     validate_dataset_id,
 )
 
@@ -110,7 +110,7 @@ class WorkspaceOnlyDataset:
             "bytes": None,
             "extensions": {},
             "newest": None,
-            "frame": False,
+            "frame": frame_path(self.dataset_id).is_file(),
             "truncated": False,
             "error": None,
             "in_root": False,
@@ -161,7 +161,10 @@ def summarize(dataset_id: str, path: Path, *, max_entries: int = MAX_SCAN_ENTRIE
                     # a triage fact, not a record, so skipping it is honest.
                     continue
 
-    frame_file = path / FRAME_FILENAME
+    # The frame's location is one rule, and it lives in the workspace
+    # (``workspace.frame_path``). The dataset directory holds data only — the
+    # mount is read-only, so a frame there could never be written.
+    frame_file = frame_path(dataset_id)
     return DatasetSummary(
         dataset_id=dataset_id,
         path=path,

@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from data_scout.tools import exif_census, file_census, pdf_forensics
+from data_scout.tools._common import ToolUnavailable
 from data_scout.tools.pdf_forensics import (
     parse_pdffonts,
     parse_pdfimages,
@@ -114,12 +115,48 @@ def test_exif_census_skips_when_exiftool_is_absent(roots):
     assert result["n"] >= 1
 
 
-def test_exif_census_on_an_empty_directory_is_zero_not_an_error(roots):
+def test_exif_census_on_an_empty_directory_is_zero_once_the_binary_is_known(roots, monkeypatch):
+    """No images is a measurement of zero — but only once exiftool is known present.
+
+    ``which`` is stubbed so the binary is "resolved" without being executed: the
+    empty walk must not need to run it, and this test then holds on any host.
+    """
+    import shutil
+
+    real_which = shutil.which
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name, *a, **k: "/usr/bin/exiftool" if name == "exiftool" else real_which(name, *a, **k),
+    )
     empty = roots.dataset("empty")
     empty.mkdir()
     result = exif_census(empty)
     assert result["n"] == 0
     assert result["value"] == 0.0
+    assert result["exiftool_available"] is True
+
+
+def test_exif_census_refuses_a_binary_free_tree_instead_of_reporting_a_clean_zero(roots, monkeypatch):
+    """"No images" and "no exiftool" are the same number and opposite facts.
+
+    This is item 2's acceptance test: it fails on the pre-fix code, where the
+    empty-tree short-circuit returns before ``require_binary`` ever runs.
+    """
+    import shutil
+
+    real_which = shutil.which
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name, *a, **k: None if name == "exiftool" else real_which(name, *a, **k),
+    )
+    empty = roots.dataset("empty")
+    empty.mkdir()
+    with pytest.raises(ToolUnavailable) as exc:
+        exif_census(empty)
+    assert "exiftool" in str(exc.value)
+    assert "libimage-exiftool-perl" in str(exc.value)
 
 
 # ---- file_census -----------------------------------------------------------
@@ -148,8 +185,45 @@ def test_file_census_reports_a_truncated_walk_as_truncated(dataset):
 
 
 def test_file_census_on_a_missing_path_is_an_empty_census(roots):
+    missing = which_missing("file")
+    if missing is not None:
+        pytest.skip("`file` is absent: this host cannot distinguish zero files from a missing instrument")
     result = file_census(roots.tmp / "nope")
     assert result["n"] == 0
+
+
+def test_file_census_refuses_an_empty_tree_when_file_is_absent(roots, monkeypatch):
+    """Same defect class as exif_census: the zero must not hide a missing binary."""
+    import shutil
+
+    real_which = shutil.which
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name, *a, **k: None if name == "file" else real_which(name, *a, **k),
+    )
+    empty = roots.dataset("empty")
+    empty.mkdir()
+    with pytest.raises(ToolUnavailable) as exc:
+        file_census(empty)
+    assert "libmagic1" in str(exc.value)
+
+
+def test_pdf_forensics_refuses_an_empty_tree_when_poppler_is_absent(roots, monkeypatch):
+    """Third instance of the same shape: no PDFs must not conceal absent poppler."""
+    import shutil
+
+    real_which = shutil.which
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name, *a, **k: None if name in {"pdfinfo", "pdffonts", "pdfimages"} else real_which(name, *a, **k),
+    )
+    empty = roots.dataset("empty")
+    empty.mkdir()
+    with pytest.raises(ToolUnavailable) as exc:
+        pdf_forensics(empty)
+    assert "poppler-utils" in str(exc.value)
 
 
 def test_file_census_without_the_file_binary_refuses_rather_than_guessing(dataset, monkeypatch):

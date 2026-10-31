@@ -57,13 +57,7 @@ def roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Roots:
     return Roots(tmp=tmp_path, datasets=datasets, workspace=ws)
 
 
-@pytest.fixture
-def dataset(roots: Roots) -> Path:
-    """A profiled dataset: a directory with a ``frame.md`` that names itself."""
-    directory = roots.dataset()
-    directory.mkdir(parents=True, exist_ok=True)
-    (directory / workspace.FRAME_FILENAME).write_text(
-        f"""---
+FRAME_MD = f"""---
 dataset_id: {DATASET_ID}
 unit: file
 lenses:
@@ -76,9 +70,19 @@ created: 2026-10-26
 # {DATASET_ID}
 
 A two-file test dataset.
-""",
-        encoding="utf-8",
-    )
+"""
+
+
+@pytest.fixture
+def dataset(roots: Roots) -> Path:
+    """A two-file dataset under the read-only root. **No frame.md.**
+
+    The frame is *state*, and state lives in the workspace (convention §1), so
+    the dataset directory holds data only. A fixture that wrote the frame here
+    would keep alive exactly the wrong-location rule ``read_frame`` had.
+    """
+    directory = roots.dataset()
+    directory.mkdir(parents=True, exist_ok=True)
     (directory / "one.txt").write_text(PROSE, encoding="utf-8")
     (directory / "two.md").write_text("# Chapter One\n\n" + PROSE, encoding="utf-8")
     return directory
@@ -86,7 +90,10 @@ A two-file test dataset.
 
 @pytest.fixture
 def dataset_workspace(roots: Roots) -> Path:
-    return workspace.ensure_workspace(DATASET_ID)
+    """The workspace tree for :data:`DATASET_ID`, with a frame that names itself."""
+    directory = workspace.ensure_workspace(DATASET_ID)
+    (directory / workspace.FRAME_FILENAME).write_text(FRAME_MD, encoding="utf-8")
+    return directory
 
 
 def not_installed(module: str) -> bool:

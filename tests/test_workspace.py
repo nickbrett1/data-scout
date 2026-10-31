@@ -19,17 +19,19 @@ def test_a_missing_dataset_fails_naming_the_resolved_root(roots):
 def test_a_dataset_without_a_frame_is_unprofiled_not_inferred(roots):
     (roots.datasets / DATASET_ID).mkdir()
     with pytest.raises(workspace.DatasetUnprofiled) as exc:
-        workspace.dataset_path(DATASET_ID)
+        workspace.read_frame(DATASET_ID)
     assert "frame.md" in str(exc.value)
 
 
-def test_the_frame_must_declare_the_id_it_is_addressed_by(dataset):
-    (dataset / "frame.md").write_text("---\ndataset_id: something-else\n---\n", encoding="utf-8")
+def test_the_frame_must_declare_the_id_it_is_addressed_by(dataset_workspace):
+    (dataset_workspace / "frame.md").write_text(
+        "---\ndataset_id: something-else\n---\n", encoding="utf-8"
+    )
     with pytest.raises(workspace.WorkspaceError, match="two ids"):
         workspace.read_frame(DATASET_ID)
 
 
-def test_the_frame_is_read_as_written(dataset):
+def test_the_frame_is_read_as_written(dataset_workspace):
     frame = workspace.read_frame(DATASET_ID)
     assert frame.dataset_id == DATASET_ID
     assert frame.unit == "file"

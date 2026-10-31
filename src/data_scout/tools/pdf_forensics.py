@@ -241,6 +241,10 @@ def pdf_forensics(
     suffixes = (".pdf",)
     target = Path(path)
     pdfs = list(iter_files(target, suffixes=None if target.suffix.lower() == ".pdf" else suffixes, limit=max_files))
+    # Resolve the poppler belt before interpreting an empty walk: "no PDFs" and
+    # "no poppler" are the same number and opposite facts (item 2's class).
+    for binary in ("pdfinfo", "pdffonts", "pdfimages"):
+        require_binary("pdf_forensics", binary, package="poppler-utils")
     if not pdfs:
         return measurement(
             value=0,

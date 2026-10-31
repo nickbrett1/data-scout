@@ -14,7 +14,10 @@ from pathlib import Path
 
 import pytest
 
+from data_scout import inventory, workspace
 from data_scout.tools import file_census, text_quality
+
+DATASET_ID = "demo-dataset"
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "src" / "data_scout" / "tools"
 
@@ -91,3 +94,64 @@ def test_measuring_a_read_only_file_needs_no_write_handle(dataset):
         assert result["n"] > 0
     finally:
         target.chmod(0o644)
+
+
+# ---- item 1: the frame is state, and state lives in the workspace ----------
+
+
+def test_read_frame_reads_the_frame_from_the_workspace_under_a_read_only_mount(
+    dataset, dataset_workspace
+):
+    """The dataset is mounted ``:ro`` by design, so the frame cannot live in it.
+
+    This is the acceptance test for the defect: on the pre-fix code
+    ``read_frame`` looks for ``frame.md`` inside the dataset, so it raises
+    ``DatasetUnprofiled`` here even though the frame exists — and this test
+    fails. It must not pass before the fix.
+    """
+    dataset.chmod(0o555)
+    try:
+        assert not (dataset / workspace.FRAME_FILENAME).exists(), (
+            "the fixture must put the frame in the workspace, not the dataset"
+        )
+        frame = workspace.read_frame(DATASET_ID)
+        assert frame.dataset_id == DATASET_ID
+        assert frame.raw.startswith("---")
+        # The frame's home is the workspace, not the read-only dataset.
+        assert frame.path == dataset_workspace
+        assert not frame.path.is_relative_to(workspace.datasets_root())
+    finally:
+        dataset.chmod(0o755)
+
+
+def test_read_frame_raises_unprofiled_when_the_workspace_has_no_frame(dataset):
+    """A genuinely absent frame still fails loudly, with the convention's error."""
+    with pytest.raises(workspace.DatasetUnprofiled) as exc:
+        workspace.read_frame(DATASET_ID)
+    assert "frame.md" in str(exc.value)
+    assert "unprofiled" in str(exc.value).lower()
+
+
+def test_dataset_path_resolves_a_dataset_that_has_no_frame(roots):
+    """``dataset_path`` answers "does this dataset exist", and nothing else.
+
+    It used to smuggle the frame-location rule in, which made the two modules
+    that ask about frames answer with two different rules.
+    """
+    (roots.datasets / DATASET_ID).mkdir()
+    assert workspace.dataset_path(DATASET_ID) == roots.datasets / DATASET_ID
+
+
+def test_inventory_and_read_frame_agree_about_where_the_frame_is(dataset, dataset_workspace):
+    """One rule, two callers: the flag and the reader cannot drift again."""
+    summary = inventory.summarize(DATASET_ID, dataset)
+    assert summary.frame is True
+    assert summary.title == DATASET_ID
+    assert workspace.read_frame(DATASET_ID).dataset_id == DATASET_ID
+
+
+def test_inventory_says_no_frame_when_only_the_dataset_has_one(dataset):
+    """A frame inside the dataset is not a frame: that location cannot even exist."""
+    (dataset / workspace.FRAME_FILENAME).write_text(f"# {DATASET_ID}\n", encoding="utf-8")
+    summary = inventory.summarize(DATASET_ID, dataset)
+    assert summary.frame is False
