@@ -113,7 +113,10 @@ BELT: dict[str, ToolSpec] = {
         _tool(
             name="partition_doc",
             group="structure",
-            version="1",
+            # 2: async submit + poll. A measurement made through the synchronous
+            # endpoint is not the same observation (it could not convert a
+            # document over ~229 pages at all), so old ledger lines stay "1".
+            version="2",
             unit="parts",
             tier=1,
             purity="network",

@@ -19,6 +19,7 @@ file that will not open on a phone.
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,26 @@ DEFAULT_DOCLING_URL = "http://docling:5001"
 
 _MAX_INLINE_PARTS = 200
 _MAX_PART_CHARS = 600
+
+#: docling-serve's asynchronous task API. The submit returns a task id, the
+#: caller polls it, and the result is fetched once it is complete — so no
+#: deployment-specific sync ceiling silently governs the conversion.
+_ASYNC_SUBMIT_PATH = "/v1/convert/file/async"
+_POLL_PATH = "/v1/status/poll/{task_id}"
+_RESULT_PATH = "/v1/result/{task_id}"
+
+#: How long this client is willing to wait for one task. The job grants each
+#: document an hour, and an hour is the honest default for a book.
+TASK_TIMEOUT_ENV = "DATA_SCOUT_DOCLING_TASK_TIMEOUT"
+POLL_INTERVAL_ENV = "DATA_SCOUT_DOCLING_POLL_INTERVAL"
+DEFAULT_TASK_TIMEOUT = 3600.0
+DEFAULT_POLL_INTERVAL = 2.0
+_MAX_POLL_INTERVAL = 5.0
+_READ_TIMEOUT = 600.0
+
+#: Task states that mean the result is fetchable, and states that mean it is not.
+_COMPLETED_STATES = frozenset({"success", "partial_success"})
+_FAILED_STATES = frozenset({"failure", "skipped"})
 
 #: Part labels, normalised to the five names the design uses.
 _LABEL_MAP = {
@@ -172,25 +193,135 @@ def _parts_from_markdown(markdown: str) -> list[dict[str, Any]]:
     return parts
 
 
-def _convert(path: Path) -> dict[str, Any]:
-    """POST one file to docling-serve and return the raw response body."""
-    httpx = _require_httpx()
-    base = docling_url()
-    url = f"{base}/v1/convert/file"
+def _client(httpx: Any) -> Any:
+    """One HTTP client for a whole conversion: submit, poll and result share it."""
+    return httpx.Client(timeout=httpx.Timeout(_READ_TIMEOUT, connect=15.0))
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        raise RuntimeError(f"partition_doc: {name}={raw!r} is not a number of seconds") from None
+    if value < 0:
+        raise RuntimeError(f"partition_doc: {name}={raw!r} must not be negative")
+    return value
+
+
+def _check(response: Any, what: str) -> None:
+    if response.status_code >= 400:
+        raise RuntimeError(
+            f"partition_doc: docling-serve returned {response.status_code} while "
+            f"{what}: {response.text[:400]}"
+        )
+
+
+def _submit(client: Any, base: str, path: Path) -> str:
+    """POST the file to the async endpoint and return the task id."""
     data = {
         "to_formats": "json",
         "do_ocr": "false",
         "image_export_mode": "placeholder",
         "table_mode": "fast",
     }
-    try:
-        with path.open("rb") as handle:
-            response = httpx.post(
-                url,
-                files={"files": (path.name, handle, "application/octet-stream")},
-                data=data,
-                timeout=httpx.Timeout(600.0, connect=15.0),
+    with path.open("rb") as handle:
+        response = client.post(
+            f"{base}{_ASYNC_SUBMIT_PATH}",
+            files={"files": (path.name, handle, "application/octet-stream")},
+            data=data,
+        )
+    _check(response, f"submitting {path.name}")
+    payload = response.json()
+    task_id = payload.get("task_id")
+    if not task_id:
+        raise RuntimeError(
+            f"partition_doc: docling-serve accepted the submission but returned no "
+            f"task_id: {str(payload)[:400]}"
+        )
+    return str(task_id)
+
+
+def _poll(client: Any, base: str, task_id: str, *, deadline: float, timeout: float) -> str:
+    """Wait for the task to reach a terminal state and return its status.
+
+    There is deliberately **no retry loop**: a timed-out conversion keeps running
+    on the sidecar, so submitting it again would add a second conversion for the
+    same bytes and amplify load. Giving up therefore raises with the task id and
+    its result URL — the work is still owned and still retrievable, just not this
+    call's to wait for.
+    """
+    interval = _float_env(POLL_INTERVAL_ENV, DEFAULT_POLL_INTERVAL)
+    poll_url = f"{base}{_POLL_PATH.format(task_id=task_id)}"
+    while True:
+        response = client.get(poll_url)
+        if response.status_code == 404:
+            raise RuntimeError(
+                f"partition_doc: docling-serve no longer knows task {task_id} (404 "
+                "from the poll endpoint); the sidecar was probably restarted "
+                "mid-conversion. Not retrying: the input bytes are unchanged, and a "
+                "retry policy belongs to the caller that can see the queue."
             )
+        _check(response, f"polling task {task_id}")
+        payload = response.json()
+        status = str(payload.get("task_status") or "")
+        if status in _COMPLETED_STATES:
+            return status
+        if status in _FAILED_STATES:
+            detail = payload.get("failure") or payload.get("error_message") or payload.get("errors")
+            raise RuntimeError(
+                f"partition_doc: docling-serve task {task_id} ended {status!r}: {detail}"
+            )
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(
+                f"partition_doc: task {task_id} is still running after {timeout:g}s and "
+                "was NOT cancelled. The conversion continues on the sidecar and is not "
+                f"orphaned: poll {poll_url} or fetch the result from "
+                f"{base}{_RESULT_PATH.format(task_id=task_id)} once it completes. This "
+                "belt does not retry, because a retry would submit a second conversion "
+                "for the same bytes."
+            )
+        time.sleep(min(interval, remaining))
+        interval = min(interval * 1.5, _MAX_POLL_INTERVAL)
+
+
+def _result(client: Any, base: str, task_id: str) -> dict[str, Any]:
+    """Fetch the completed task's payload."""
+    response = client.get(f"{base}{_RESULT_PATH.format(task_id=task_id)}")
+    if response.status_code >= 400:
+        raise RuntimeError(
+            f"partition_doc: could not fetch the result for task {task_id}: "
+            f"HTTP {response.status_code}: {response.text[:400]}"
+        )
+    payload = response.json()
+    if isinstance(payload, dict) and isinstance(payload.get("failure"), dict):
+        raise RuntimeError(
+            f"partition_doc: task {task_id} has no conversion result: {payload['failure']}"
+        )
+    return payload
+
+
+def _convert(path: Path) -> tuple[dict[str, Any], str]:
+    """Submit one file asynchronously, wait for the task, and return its result.
+
+    The synchronous endpoint this used to call abandons the request at
+    ``DOCLING_SERVE_MAX_SYNC_WAIT`` (120 s by default) while the conversion keeps
+    running, so every document over ~229 pages got a clean HTTP 504 *and* left an
+    unowned conversion competing with the next one. The async endpoint removes
+    that ceiling structurally, with no sidecar restart and no memory edit.
+    """
+    httpx = _require_httpx()
+    base = docling_url()
+    timeout = _float_env(TASK_TIMEOUT_ENV, DEFAULT_TASK_TIMEOUT)
+    deadline = time.monotonic() + timeout
+    try:
+        with _client(httpx) as client:
+            task_id = _submit(client, base, path)
+            status = _poll(client, base, task_id, deadline=deadline, timeout=timeout)
+            payload = _result(client, base, task_id)
     except httpx.HTTPError as exc:
         raise ToolUnavailable(
             "partition_doc",
@@ -198,16 +329,7 @@ def _convert(path: Path) -> dict[str, Any]:
             f"The request failed ({type(exc).__name__}: {exc}). Check DOCLING_URL and "
             "that docling-serve is up; do not fall back to a local model.",
         ) from exc
-    if response.status_code >= 400:
-        raise RuntimeError(
-            f"partition_doc: docling-serve returned {response.status_code} for "
-            f"{path.name}: {response.text[:400]}"
-        )
-    payload = response.json()
-    status = payload.get("status")
-    if status and status != "success":
-        raise RuntimeError(f"partition_doc: docling-serve reported {status!r}: {payload.get('errors')}")
-    return payload
+    return payload, status
 
 
 def _require_httpx():
@@ -222,7 +344,7 @@ def _require_httpx():
     return httpx
 
 
-@cached(tool="partition_doc", tool_version=f"1+docling-model:{_model_version()}")
+@cached(tool="partition_doc", tool_version=f"2+docling-model:{_model_version()}")
 def partition_doc(path: str | os.PathLike[str]) -> dict[str, Any]:
     """Partition one document into layout-aware parts.
 
@@ -234,7 +356,7 @@ def partition_doc(path: str | os.PathLike[str]) -> dict[str, Any]:
     if not target.is_file():
         raise FileNotFoundError(f"partition_doc: not a file: {target}")
 
-    payload = _convert(target)
+    payload, task_status = _convert(target)
     document = payload.get("document") or {}
     json_content = document.get("json_content")
     if isinstance(json_content, str):
@@ -270,6 +392,7 @@ def partition_doc(path: str | os.PathLike[str]) -> dict[str, Any]:
         parts=inline,
         parts_truncated=trimmed,
         origin=origin,
+        docling_task_status=task_status,
         doc_name=document.get("filename") or target.name,
         docling_url=docling_url(),
         model_version=_model_version(),
