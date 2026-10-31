@@ -60,7 +60,7 @@ def test_the_ledger_and_cache_live_in_the_workspace_not_the_dataset(roots, datas
 
 
 def test_an_artifact_has_one_location_and_it_follows_the_convention(roots):
-    """Report at the root; session HTML with its notebook under ``notebooks/``.
+    """Both servable kinds live at the dataset root, beside ``frame.md``.
 
     This is the writer/reader contract as a test: ``report-render`` and the
     ``/report/`` index both resolve through this function.
@@ -69,7 +69,7 @@ def test_an_artifact_has_one_location_and_it_follows_the_convention(roots):
     session = workspace.artifact_path(DATASET_ID, "session-1.html")
 
     assert report.parent == roots.workspace / DATASET_ID
-    assert session.parent == roots.workspace / DATASET_ID / "notebooks"
+    assert session.parent == roots.workspace / DATASET_ID
     assert report.name == "report-2026-10-31.html"
     assert session.name == "session-1.html"
     assert workspace.artifact_kind("report-2026-10-31.html") == "report"
@@ -79,11 +79,11 @@ def test_an_artifact_has_one_location_and_it_follows_the_convention(roots):
         workspace.artifact_path(DATASET_ID, "findings.jsonl")
 
 
-def test_artifact_paths_finds_both_locations_and_ignores_everything_else(dataset_workspace):
+def test_artifact_paths_finds_both_kinds_at_the_root_and_ignores_everything_else(dataset_workspace):
     (dataset_workspace / "report-2026-10-31.html").write_text("r", encoding="utf-8")
+    (dataset_workspace / "session-1.html").write_text("s", encoding="utf-8")
     (dataset_workspace / "frame.md").write_text("not an artifact", encoding="utf-8")
     notebooks = dataset_workspace / "notebooks"
-    (notebooks / "session-1.html").write_text("s", encoding="utf-8")
     (notebooks / "session-1.ipynb").write_text("{}", encoding="utf-8")
 
     names = [path.name for path in workspace.artifact_paths(DATASET_ID)]

@@ -377,17 +377,16 @@ def artifact_kind(filename: str) -> str | None:
 def artifact_dir(dataset_id: str, kind: str) -> Path:
     """The **one** place a rendered artifact's directory is decided.
 
-    ``report-*.html`` is the deliverable and lives at the dataset root beside
-    ``frame.md`` and ``findings.jsonl``; ``session-*.html`` is the evidence
-    appendix and lives with its notebook under ``notebooks/``
-    (convention §1 and §4.1). Both the writer (``render``) and the reader
-    (``__main__``, for ``/report/``) call this, so a correct render cannot be
-    invisible to the index by construction.
+    Both servable kinds — ``report-*.html`` and ``session-*.html`` — live at the
+    dataset root beside ``frame.md`` and ``findings.jsonl`` (convention §1 and
+    §4.1: ``report-*.md/.html`` at the dataset root, and a session's HTML is the
+    evidence appendix to the same deliverable). The notebook itself stays under
+    ``notebooks/``; only its rendered form is served. Both the writer
+    (``render``) and the reader (``__main__``, for ``/report/``) call this, so
+    a correct render cannot be invisible to the index by construction.
     """
-    if kind == "report":
+    if kind in ("report", "session"):
         return workspace_dir(dataset_id)
-    if kind == "session":
-        return notebook_dir(dataset_id)
     raise WorkspaceError(f"unknown artifact kind {kind!r}; expected 'report' or 'session'")
 
 

@@ -423,10 +423,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         # --- 5. render ------------------------------------------------------
         rendered: list[Path] = []
-        # One location rule, shared with the `/report/` reader. A session's HTML
-        # is the evidence appendix and lives under `notebooks/` with its
-        # notebook; writing it beside the notebook by `with_suffix` was the
-        # defect that hid every correct render from the index.
+        # One location rule, shared with the `/report/` reader. Both artifacts
+        # live at the dataset root beside frame.md; writing this one beside the
+        # notebook by `with_suffix` was the defect that hid every correct render
+        # from the index.
         session_html = workspace.artifact_path(
             dataset_id, notebook_path.with_suffix(".html").name
         )

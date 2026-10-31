@@ -26,9 +26,9 @@ def server(dataset_workspace):
     import uvicorn
 
     (dataset_workspace / "report-2026-10-26.html").write_text("<html>report</html>", encoding="utf-8")
-    # A session's evidence appendix lives with its notebook, one level below the
-    # root. The reader must still find it, because the writer says so.
-    (workspace.notebook_dir(DATASET_ID) / "session-1.html").write_text(
+    # A session's evidence appendix is served from the dataset root, beside the
+    # report and frame.md — the same rule the writer uses.
+    (dataset_workspace / "session-1.html").write_text(
         "<html>session</html>", encoding="utf-8"
     )
     (dataset_workspace / "findings.jsonl").write_text('{"a":1}\n{"b":2}\n', encoding="utf-8")
@@ -198,11 +198,11 @@ def test_a_frozen_artifact_is_served(server):
     assert body == "<html>report</html>"
 
 
-def test_a_session_html_is_served_from_its_notebook_directory(server):
+def test_a_session_html_is_served_from_the_dataset_root(server):
     """The measured defect: a correct render at `notebooks/session-1.html` was 404.
 
-    The URL stays flat (``/report/<dataset>/<file>``); only the on-disk
-    directory differs, and it is now resolved by the same rule the writer uses.
+    The URL stays flat (``/report/<dataset>/<file>``); the file lives at the
+    dataset root beside ``frame.md``, resolved by the same rule the writer uses.
     """
     status, content_type, body = get(server, f"/report/{DATASET_ID}/session-1.html")
     assert status == 200

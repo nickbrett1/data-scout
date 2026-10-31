@@ -67,7 +67,7 @@ def ledger_lines() -> list[dict]:
 
 
 def test_a_render_executes_verifies_and_writes_both_renditions(dataset_workspace, capsys):
-    notebook_path = build_session(
+    build_session(
         dataset_workspace,
         cells=[APPEND_CELL],
         report_text="# A test report\n\n| unit | value |\n|---|---|\n| file | 0.9 |\n",
@@ -77,7 +77,7 @@ def test_a_render_executes_verifies_and_writes_both_renditions(dataset_workspace
     assert code == 0, capsys.readouterr().err
 
     assert len(ledger_lines()) == 1
-    session_html = notebook_path.with_suffix(".html")
+    session_html = workspace.artifact_path(DATASET_ID, "session-1.html")
     report_html = dataset_workspace / "report-2026-10-26.html"
     assert session_html.is_file()
     assert report_html.is_file()
@@ -85,22 +85,31 @@ def test_a_render_executes_verifies_and_writes_both_renditions(dataset_workspace
     assert "prefers-color-scheme" in report_html.read_text(encoding="utf-8")
 
 
-def test_a_correct_render_is_visible_to_the_report_index(dataset_workspace, capsys):
-    """Writer and reader share one location rule, so the HTML cannot be orphaned.
+def test_writer_and_reader_agree_on_the_session_html_location(dataset_workspace, capsys):
+    """Pin the writer's path to the reader's path: the two disagreed once.
 
     This is the defect measured on ryzen: exit 0, gate passed, 337 KB of real
-    HTML written to ``notebooks/``, and ``/report/`` returned 404 with
-    ``artifacts: []``. The test asserts both the location and the reader.
+    HTML written to ``notebooks/``, while ``/report/`` both indexed and resolved
+    from the dataset root — so the index showed ``artifacts: []`` and the file
+    was unreachable. 173 passing tests stood between the two functions and
+    caught nothing, because no test asserted that the writer's location *is* the
+    reader's location. This one does, from both ends:
+
+    * the writer (``render.main``) must land the file at
+      ``workspace_dir(dataset) / "session-1.html"`` — beside ``frame.md``;
+    * the reader (``index_payload`` and ``resolve_artifact``) must name and
+      resolve that exact path.
     """
     from data_scout import __main__ as app
 
-    notebook_path = build_session(dataset_workspace, cells=[APPEND_CELL])
+    build_session(dataset_workspace, cells=[APPEND_CELL])
     assert render.main([DATASET_ID, "--quiet"]) == 0, capsys.readouterr().err
 
-    canonical = workspace.artifact_path(DATASET_ID, "session-1.html")
-    assert canonical == workspace.notebook_dir(DATASET_ID) / "session-1.html"
-    assert notebook_path.with_suffix(".html") == canonical
+    # The one path both sides must agree on: dataset root, not notebooks/.
+    canonical = workspace.workspace_dir(DATASET_ID) / "session-1.html"
+    assert workspace.artifact_path(DATASET_ID, "session-1.html") == canonical
     assert canonical.is_file()
+    assert not (workspace.notebook_dir(DATASET_ID) / "session-1.html").exists()
 
     record = next(
         item for item in app.index_payload()["datasets"] if item["dataset_id"] == DATASET_ID
@@ -145,7 +154,7 @@ def test_a_render_does_not_grow_the_ledger_twice(dataset_workspace, capsys):
 
 
 def test_the_gate_refuses_a_rendition_that_does_not_reproduce(dataset_workspace, capsys):
-    notebook_path = build_session(dataset_workspace, cells=[NONDETERMINISTIC_CELL])
+    build_session(dataset_workspace, cells=[NONDETERMINISTIC_CELL])
 
     code = render.main([DATASET_ID, "--quiet"])
     captured = capsys.readouterr()
@@ -153,7 +162,7 @@ def test_the_gate_refuses_a_rendition_that_does_not_reproduce(dataset_workspace,
     assert "VERIFICATION FAILED" in captured.err
     assert "No" in captured.err or "nothing was rendered" in captured.err.lower()
     # A known-bad rendition is worse than no rendition.
-    assert not notebook_path.with_suffix(".html").exists()
+    assert not workspace.artifact_path(DATASET_ID, "session-1.html").exists()
 
 
 def test_cell_output_is_printed_so_the_agent_can_iterate(dataset_workspace, capsys):
@@ -165,18 +174,18 @@ def test_cell_output_is_printed_so_the_agent_can_iterate(dataset_workspace, caps
 
 
 def test_a_failing_cell_is_reported_and_not_rendered(dataset_workspace, capsys):
-    notebook_path = build_session(dataset_workspace, cells=["raise ValueError('cell seven')"])
+    build_session(dataset_workspace, cells=["raise ValueError('cell seven')"])
     code = render.main([DATASET_ID, "--quiet"])
     captured = capsys.readouterr()
     assert code == 1
     assert "cell 2" in captured.err
-    assert not notebook_path.with_suffix(".html").exists()
+    assert not workspace.artifact_path(DATASET_ID, "session-1.html").exists()
 
 
 def test_verify_only_renders_nothing(dataset_workspace, capsys):
-    notebook_path = build_session(dataset_workspace, cells=[APPEND_CELL])
+    build_session(dataset_workspace, cells=[APPEND_CELL])
     assert render.main([DATASET_ID, "--quiet", "--verify-only"]) == 0
-    assert not notebook_path.with_suffix(".html").exists()
+    assert not workspace.artifact_path(DATASET_ID, "session-1.html").exists()
 
 
 def test_a_missing_workspace_is_a_refusal_not_a_crash(roots, capsys):
@@ -253,7 +262,7 @@ def test_a_retired_v1_line_beside_a_new_v2_line_still_verifies_clean(
 
     seeded = Finding.model_validate(RETIRED_V1_FRAME_LINE)
     Ledger(workspace.ledger_path(DATASET_ID)).append(seeded)
-    notebook_path = build_session(dataset_workspace, cells=[V2_FRAME_CELL])
+    build_session(dataset_workspace, cells=[V2_FRAME_CELL])
 
     code = render.main([DATASET_ID, "--quiet"])
     assert code == 0, capsys.readouterr().err
@@ -269,18 +278,18 @@ def test_a_retired_v1_line_beside_a_new_v2_line_still_verifies_clean(
     # v2 line to the same history. Both schema sets are [1, 2].
     scratch_after = [lines[0], lines[1]]
     assert frame.comparability_problems(lines, scratch_after) == []
-    assert notebook_path.with_suffix(".html").exists()
+    assert workspace.artifact_path(DATASET_ID, "session-1.html").exists()
 
 
 def test_the_gate_says_not_comparable_instead_of_drifting_across_frame_schemas(
     dataset_workspace, capsys
 ):
     """A v1 and a v2 frame line are not a byte delta; they are different rules."""
-    notebook_path = build_session(dataset_workspace, cells=[FRAME_VERSION_BY_RUN])
+    build_session(dataset_workspace, cells=[FRAME_VERSION_BY_RUN])
 
     code = render.main([DATASET_ID, "--quiet"])
     captured = capsys.readouterr()
     assert code == 1
     assert "not comparable" in captured.err
     assert "different frame rules" in captured.err
-    assert not notebook_path.with_suffix(".html").exists()
+    assert not workspace.artifact_path(DATASET_ID, "session-1.html").exists()
