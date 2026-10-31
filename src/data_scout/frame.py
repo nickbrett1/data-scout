@@ -1,0 +1,542 @@
+"""The dataset frame — an identity claim about the data, and the rules behind it.
+
+``frame.md`` used to record a single figure over the whole checkout. DVC
+rewrites ``.dvc/tmp/lock`` and ``.dvc/tmp/rwlock.lock`` whenever it runs, so
+that figure moved by two bytes 3 h 44 m after it was measured, with the payload
+provably untouched. The number looked like a measurement of the data and was
+partly a measurement of the tooling — item 2's defect one layer up.
+
+The fix is structural, not a filter:
+
+* **The identity is the payload.** ``data/`` is the scope: names and sizes,
+  sorted, hashed. That is what "which corpus is this" means.
+* **The whole-checkout figure is kept, but it is not the identity.** It is
+  recorded as ``checkout`` beside the payload identity, and it is measured
+  under the same declared exclusions so it cannot drift on VCS scratch either.
+* **Exclusions are an explicit, named list** (:data:`FRAME_EXCLUSIONS`) — a
+  property of this module, not a per-call option. A caller cannot ask for a
+  different rule, because a number measured under a rule nobody can see is the
+  defect this module exists to remove.
+* **The schema version is emitted here**, by the code that measures the frame
+  (:data:`FRAME_SCHEMA_VERSION`), never supplied by a caller. A v1 frame (no
+  ``frame_schema`` key) and a v2 frame are *not comparable*, and
+  :func:`compare_frames` says so instead of reporting a byte delta.
+* **``unit`` does not move.** The frame's unit is a file-level identity claim
+  and stays ``files`` (phase 2a settled this); ``document`` is the unit for
+  measurement.
+
+The exclusion set is deliberately not configurable. If a future dataset needs a
+different rule, that is a new schema version, measured by code that records it.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from data_scout import workspace
+
+#: The version of the *frame schema* this module emits. A frame without a
+#: ``frame_schema`` key is version 1 (the phase-1 record on ``vg-books-2026-10``
+#: is one). Version 2 adds the payload identity, the declared exclusion set and
+#: the checkout figure as separate, labelled facts.
+FRAME_SCHEMA_VERSION = 2
+
+#: Versions this reader understands. A frame from a newer schema fails loudly
+#: rather than being read under rules it was not measured with.
+SUPPORTED_FRAME_SCHEMAS = (1, 2)
+
+#: The tool name on a frame identity line in ``findings.jsonl``. Not a belt
+#: instrument — the frame is part of the substrate, not a sixteenth name.
+FRAME_TOOL = "frame"
+
+#: How the manifest is computed, recorded in the frame so a reader never has to
+#: guess. Names and sizes only: this is an identity claim, not a content hash.
+MANIFEST_RULE = (
+    "sha256 over 'relpath<TAB>size<LF>' for every included file, sorted by "
+    "relpath; symlinks skipped; names and sizes only, not content"
+)
+
+#: The two scopes a v2 frame records. ``identity`` is the claim about the data;
+#: ``checkout`` is the claim about the tree on disk.
+IDENTITY_SCOPE = "data"
+CHECKOUT_SCOPE = "."
+
+
+class FrameSchemaError(workspace.WorkspaceError):
+    """A frame declares a schema this reader does not understand."""
+
+
+class FrameMeasureError(RuntimeError):
+    """A frame cannot be written without silently replacing an existing one."""
+
+
+@dataclass(frozen=True)
+class Exclusion:
+    """One declared exclusion: a name, the path it covers, and why.
+
+    ``name`` is what the frame records. ``path`` is a path relative to the
+    dataset root. The pair is data, so a reader can see *what* was left out
+    without reading this module's walk.
+    """
+
+    name: str
+    path: str
+    why: str
+
+
+#: The explicit exclusion set. Both entries are VCS transient state: git
+#: rewrites its index/logs, and DVC rewrites its own lockfiles. Neither is part
+#: of the corpus, and both change for reasons unrelated to the data.
+FRAME_EXCLUSIONS: tuple[Exclusion, ...] = (
+    Exclusion(
+        name="git-internals",
+        path=".git",
+        why="git rewrites its index, logs and refs on ordinary VCS activity",
+    ),
+    Exclusion(
+        name="dvc-internals",
+        path=".dvc",
+        why=(
+            "DVC rewrites .dvc/tmp/lock and .dvc/tmp/rwlock.lock on ordinary "
+            "DVC activity; measured 9 -> 8 bytes with the payload untouched"
+        ),
+    ),
+)
+
+#: The exclusion names in force. Recorded in every v2 frame.
+EXCLUSION_NAMES: tuple[str, ...] = tuple(item.name for item in FRAME_EXCLUSIONS)
+
+
+@dataclass(frozen=True)
+class TreeIdentity:
+    """One scope, measured: how many files, how many bytes, which manifest."""
+
+    scope: str
+    files: int
+    bytes: int
+    manifest: str
+    exclusions: tuple[str, ...] = ()
+    excluded_files: int = 0
+    excluded_bytes: int = 0
+
+    def as_record(self) -> dict[str, Any]:
+        return {
+            "scope": self.scope,
+            "files": self.files,
+            "bytes": self.bytes,
+            "manifest": self.manifest,
+            "exclusions": list(self.exclusions),
+            "excluded_files": self.excluded_files,
+            "excluded_bytes": self.excluded_bytes,
+        }
+
+
+@dataclass(frozen=True)
+class FrameMeasurement:
+    """A frame measured under this schema: the payload identity and the checkout."""
+
+    dataset_id: str
+    schema_version: int
+    unit: str
+    identity: TreeIdentity
+    checkout: TreeIdentity
+    measured: str
+
+    @property
+    def exclusions(self) -> tuple[str, ...]:
+        # Both scopes are measured under the same declared set; recording it
+        # once keeps "which exclusions were in force" a single answer.
+        return self.identity.exclusions
+
+    def as_record(self) -> dict[str, Any]:
+        return {
+            "dataset_id": self.dataset_id,
+            "frame_schema": self.schema_version,
+            "unit": self.unit,
+            "exclusions": list(self.exclusions),
+            "identity": self.identity.as_record(),
+            "checkout": self.checkout.as_record(),
+            "manifest_rule": MANIFEST_RULE,
+            "measured": self.measured,
+        }
+
+
+# --------------------------------------------------------------------------
+# measuring
+# --------------------------------------------------------------------------
+
+
+def _excluded(relative: str, exclusions: Sequence[Exclusion]) -> Exclusion | None:
+    for item in exclusions:
+        if relative == item.path or relative.startswith(item.path + "/"):
+            return item
+    return None
+
+
+def _tally(root: Path) -> tuple[int, int]:
+    """Files and bytes under ``root``, symlinks skipped."""
+    files = total = 0
+    for dirpath, _dirnames, filenames in os.walk(root, followlinks=False):
+        for name in filenames:
+            path = Path(dirpath) / name
+            if path.is_symlink():
+                continue
+            try:
+                total += path.stat().st_size
+            except OSError:
+                continue
+            files += 1
+    return files, total
+
+
+def measure_tree(
+    root: Path,
+    *,
+    scope: str,
+    exclusions: Sequence[Exclusion] | None = None,
+) -> TreeIdentity:
+    """Measure one scope under the declared exclusions.
+
+    Private in spirit: the public entry point is :func:`measure_frame`, which
+    fixes the scopes and the exclusion set. This function takes them because a
+    measurement should be *reused*, not because a caller may choose a rule.
+    """
+    if exclusions is None:
+        exclusions = FRAME_EXCLUSIONS
+    base = root if scope in {"", ".", "./"} else root / scope
+    records: list[tuple[str, int]] = []
+    excluded_files = excluded_bytes = 0
+
+    if base.is_dir():
+        for dirpath, dirnames, filenames in os.walk(base, followlinks=False):
+            directory = Path(dirpath)
+            relative_dir = directory.relative_to(root).as_posix()
+            if relative_dir == ".":
+                relative_dir = ""
+
+            keep: list[str] = []
+            for name in sorted(dirnames):
+                relative = f"{relative_dir}/{name}" if relative_dir else name
+                if _excluded(relative, exclusions):
+                    kept_files, kept_bytes = _tally(directory / name)
+                    excluded_files += kept_files
+                    excluded_bytes += kept_bytes
+                else:
+                    keep.append(name)
+            dirnames[:] = keep
+
+            for name in sorted(filenames):
+                path = directory / name
+                if path.is_symlink():
+                    continue
+                relative = f"{relative_dir}/{name}" if relative_dir else name
+                try:
+                    size = path.stat().st_size
+                except OSError:
+                    continue
+                if _excluded(relative, exclusions):
+                    excluded_files += 1
+                    excluded_bytes += size
+                    continue
+                records.append((relative, size))
+
+    records.sort(key=lambda item: item[0])
+    digest = hashlib.sha256()
+    for relative, size in records:
+        digest.update(f"{relative}\t{size}\n".encode())
+
+    return TreeIdentity(
+        scope=scope,
+        files=len(records),
+        bytes=sum(size for _relative, size in records),
+        manifest=digest.hexdigest(),
+        exclusions=tuple(item.name for item in exclusions),
+        excluded_files=excluded_files,
+        excluded_bytes=excluded_bytes,
+    )
+
+
+def measure_frame(dataset_id: str, *, root: Path | None = None) -> FrameMeasurement:
+    """Measure a dataset's frame under this schema.
+
+    ``root`` exists so a test can measure a fixture without an environment
+    mount; the scopes and the exclusion set are **not** parameters. That is the
+    point: the rule belongs to the schema, not to the caller.
+    """
+    workspace.validate_dataset_id(dataset_id)
+    if root is None:
+        root = workspace.dataset_path(dataset_id)
+    root = Path(root)
+
+    return FrameMeasurement(
+        dataset_id=dataset_id,
+        # Emitted here, by the code that measured it. Never a caller field.
+        schema_version=FRAME_SCHEMA_VERSION,
+        unit="files",
+        identity=measure_tree(root, scope=IDENTITY_SCOPE),
+        checkout=measure_tree(root, scope=CHECKOUT_SCOPE),
+        measured=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    )
+
+
+# --------------------------------------------------------------------------
+# writing
+# --------------------------------------------------------------------------
+
+
+def render_frame(
+    measurement: FrameMeasurement,
+    *,
+    lenses: Sequence[str] = (),
+    tier_ceiling: int = 1,
+    created: str | None = None,
+) -> str:
+    """Render a v2 ``frame.md``. The exclusion set is written down, not implied."""
+    created = created or measurement.measured[:10]
+    lines = [
+        "---",
+        f"dataset_id: {measurement.dataset_id}",
+        f"frame_schema: {measurement.schema_version}",
+        f"unit: {measurement.unit}",
+        "frame_exclusions:",
+        *(f"  - {name}" for name in measurement.exclusions),
+        f"identity_scope: {measurement.identity.scope}",
+        f"identity_files: {measurement.identity.files}",
+        f"identity_bytes: {measurement.identity.bytes}",
+        f"identity_manifest: {measurement.identity.manifest}",
+        f"checkout_scope: {measurement.checkout.scope}",
+        f"checkout_files: {measurement.checkout.files}",
+        f"checkout_bytes: {measurement.checkout.bytes}",
+        f"checkout_manifest: {measurement.checkout.manifest}",
+        f"manifest_rule: {MANIFEST_RULE}",
+        f"created: {created}",
+    ]
+    if lenses:
+        lines.append("lenses:")
+        lines.extend(f"  - {lens}" for lens in lenses)
+    lines.append(f"tier_ceiling: {tier_ceiling}")
+    lines.append("---")
+    lines.append("")
+    lines.append(f"# {measurement.dataset_id}")
+    lines.append("")
+    lines.append(
+        f"Identity is the payload under `{measurement.identity.scope}/` "
+        f"({measurement.identity.files} "
+        f"{'file' if measurement.identity.files == 1 else 'files'}, "
+        f"{measurement.identity.bytes} B). "
+        f"The checkout figure includes the rest of the tree except the declared "
+        f"exclusions ({', '.join(measurement.exclusions)}), which are VCS "
+        "transient state and not part of the corpus."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_frame(
+    dataset_id: str,
+    measurement: FrameMeasurement,
+    *,
+    lenses: Sequence[str] = (),
+    tier_ceiling: int = 1,
+    created: str | None = None,
+    overwrite: bool = False,
+) -> Path:
+    """Write a **new** frame. An existing frame is a record, not a draft.
+
+    ``frame.md`` says what was measured under the rules in force at the time.
+    Re-measuring an existing frame is a deliberate decision, so this refuses to
+    replace one unless the caller says so explicitly.
+    """
+    path = workspace.frame_path(dataset_id)
+    if path.exists() and not overwrite:
+        raise FrameMeasureError(
+            f"{path} already exists. A frame records what was measured under the "
+            "rules in force then; re-measuring it is a decision, not an overwrite. "
+            "Pass overwrite=True only when that decision has been made."
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        render_frame(
+            measurement, lenses=lenses, tier_ceiling=tier_ceiling, created=created
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def identity_finding(
+    measurement: FrameMeasurement,
+    *,
+    dataset_id: str,
+    session: int,
+    promoted: bool,
+    script: str | None = None,
+    retire_reason: str | None = None,
+) -> dict[str, Any]:
+    """The ledger line for a frame, with the schema version emitted, not supplied.
+
+    ``value`` is the payload identity's byte count and ``n`` its file count —
+    the claim about the data. The checkout figure is recorded in ``params`` so
+    it is visible without being mistaken for the identity.
+    """
+    params: dict[str, Any] = {
+        "frame_schema": measurement.schema_version,
+        "frame_exclusions": list(measurement.exclusions),
+        "manifest_rule": MANIFEST_RULE,
+        "identity_scope": measurement.identity.scope,
+        "identity_files": measurement.identity.files,
+        "identity_manifest": measurement.identity.manifest,
+        "checkout_scope": measurement.checkout.scope,
+        "checkout_files": measurement.checkout.files,
+        "checkout_bytes": measurement.checkout.bytes,
+        "checkout_manifest": measurement.checkout.manifest,
+        "checkout_excluded_files": measurement.checkout.excluded_files,
+    }
+    record: dict[str, Any] = {
+        "dataset_id": dataset_id,
+        "session": session,
+        "unit": measurement.unit,
+        "tool": FRAME_TOOL,
+        # Emitted by the measurer, never a caller argument.
+        "tool_version": str(measurement.schema_version),
+        "params": params,
+        "value": measurement.identity.bytes,
+        "n": measurement.identity.files,
+        "promoted": promoted,
+    }
+    if promoted:
+        record["script"] = script or "data_scout.frame"
+    if retire_reason is not None:
+        record["retire_reason"] = retire_reason
+    return record
+
+
+# --------------------------------------------------------------------------
+# comparability
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Comparison:
+    """The result of comparing two frames.
+
+    ``delta`` is only present when the frames are comparable. A not-comparable
+    result must never carry a byte delta: the delta would be between rules, not
+    between data.
+    """
+
+    comparable: bool
+    left_schema: int
+    right_schema: int
+    reason: str | None = None
+    delta: dict[str, Any] | None = None
+
+
+def compare_frames(left: workspace.Frame, right: workspace.Frame) -> Comparison:
+    """Compare two frames, refusing a delta when they were measured differently.
+
+    Different schema versions, or different exclusion sets, mean the numbers are
+    claims about different rules. Reporting a byte delta there would be drift
+    fiction.
+    """
+    if left.schema_version != right.schema_version:
+        return Comparison(
+            comparable=False,
+            left_schema=left.schema_version,
+            right_schema=right.schema_version,
+            reason=(
+                "not comparable: these frames were measured under different frame "
+                f"rules (schema v{left.schema_version} and v{right.schema_version}); "
+                "a byte delta would be a delta between rules, not data"
+            ),
+        )
+    if left.exclusions != right.exclusions:
+        return Comparison(
+            comparable=False,
+            left_schema=left.schema_version,
+            right_schema=right.schema_version,
+            reason=(
+                "not comparable: different exclusions were in force "
+                f"({list(left.exclusions)} vs {list(right.exclusions)}); a byte "
+                "delta would be a delta between rules, not data"
+            ),
+        )
+    if left.identity is None or right.identity is None:
+        return Comparison(
+            comparable=False,
+            left_schema=left.schema_version,
+            right_schema=right.schema_version,
+            reason=(
+                "not comparable: at least one frame records no payload identity "
+                "(an identity scope and manifest are required)"
+            ),
+        )
+    return Comparison(
+        comparable=True,
+        left_schema=left.schema_version,
+        right_schema=right.schema_version,
+        delta={
+            "scope": left.identity.scope,
+            "files": right.identity.files - left.identity.files,
+            "bytes": right.identity.bytes - left.identity.bytes,
+            "manifest_same": left.identity.manifest == right.identity.manifest,
+        },
+    )
+
+
+def _frame_lines(lines: Sequence[str | dict]) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
+    for line in lines:
+        if isinstance(line, str):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+        else:
+            record = dict(line)
+        if record.get("tool") == FRAME_TOOL:
+            found.append(record)
+    return found
+
+
+def _line_schema(record: dict[str, Any]) -> int:
+    params = record.get("params")
+    value = params.get("frame_schema", 1) if isinstance(params, dict) else 1
+    # An unreadable version is not v1; it is unknown, and unknown is not comparable.
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return -1
+
+
+def comparability_problems(
+    left: Sequence[str | dict], right: Sequence[str | dict]
+) -> list[str]:
+    """Problems that make two runs' frame lines incomparable. Empty means none.
+
+    This is the ledger-side counterpart of :func:`compare_frames`: the frame is
+    a line in ``findings.jsonl``, so ``report-render``'s diff is where a v1 line
+    and a v2 line would otherwise be read as drift. Absence of a frame line on
+    either side makes no claim, so it is not a problem.
+    """
+    left_versions = sorted({_line_schema(record) for record in _frame_lines(left)})
+    right_versions = sorted({_line_schema(record) for record in _frame_lines(right)})
+    if not left_versions or not right_versions:
+        return []
+    if left_versions != right_versions:
+        return [
+            "frame identity not comparable: the two runs measured it under "
+            f"different frame rules (frame schema {left_versions} vs "
+            f"{right_versions}). A byte delta here would be a delta between "
+            "rules, not data; no drift verdict is possible."
+        ]
+    return []

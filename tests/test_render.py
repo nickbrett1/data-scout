@@ -149,3 +149,37 @@ def test_verify_only_renders_nothing(dataset_workspace, capsys):
 def test_a_missing_workspace_is_a_refusal_not_a_crash(roots, capsys):
     assert render.main(["no-such-dataset"]) == 2
     assert "no workspace" in capsys.readouterr().err
+
+
+FRAME_VERSION_BY_RUN = """
+from data_scout import workspace
+from data_scout.tools import findings_append
+
+# The verification run works in a scratch workspace whose path names it.
+verified = "data-scout-verify" in str(workspace.workspace_root())
+schema = 1 if verified else 2
+findings_append({
+    "unit": "files",
+    "tool": "frame",
+    "tool_version": str(schema),
+    "params": {"frame_schema": schema},
+    "value": 200 if schema == 1 else 100,
+    "n": 8,
+    "promoted": False,
+    "retire_reason": "one-off: the test writes a frame line under a chosen schema",
+})
+"""
+
+
+def test_the_gate_says_not_comparable_instead_of_drifting_across_frame_schemas(
+    dataset_workspace, capsys
+):
+    """A v1 and a v2 frame line are not a byte delta; they are different rules."""
+    notebook_path = build_session(dataset_workspace, cells=[FRAME_VERSION_BY_RUN])
+
+    code = render.main([DATASET_ID, "--quiet"])
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "not comparable" in captured.err
+    assert "different frame rules" in captured.err
+    assert not notebook_path.with_suffix(".html").exists()

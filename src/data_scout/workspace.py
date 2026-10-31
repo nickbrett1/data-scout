@@ -129,11 +129,27 @@ def _visible_dirs(root: Path) -> list[str]:
 
 
 @dataclass(frozen=True)
+class FrameIdentity:
+    """One measured scope recorded in a v2 frame: scope, count, bytes, manifest."""
+
+    scope: str
+    files: int
+    bytes: int
+    manifest: str
+
+
+@dataclass(frozen=True)
 class Frame:
     """The dataset frame written in phase 1 (``data-scout-recipe`` phase 1).
 
     ``purpose`` is deliberately not required and not invented: purpose arrives
     late, and the frame's job is triage, not motive.
+
+    ``schema_version`` is ``1`` when the frame carries no ``frame_schema`` key
+    (every phase-1 frame, including the real one on disk). A v2 frame records a
+    payload ``identity`` and a ``checkout`` figure separately, plus the named
+    exclusions in force. The two are not interchangeable, which is why
+    ``frame.compare_frames`` refuses to diff across versions.
     """
 
     dataset_id: str
@@ -144,6 +160,10 @@ class Frame:
     unit: str | None = None
     tier_ceiling: int | None = None
     created: str | None = None
+    schema_version: int = 1
+    exclusions: tuple[str, ...] = ()
+    identity: FrameIdentity | None = None
+    checkout: FrameIdentity | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -226,6 +246,48 @@ def read_frame(dataset_id: str) -> Frame:
     if isinstance(lenses, str):
         lenses = (lenses,)
     ceiling = meta.get("tier_ceiling")
+
+    from data_scout.frame import SUPPORTED_FRAME_SCHEMAS, FrameSchemaError
+
+    # An absent key is version 1: every frame written before the schema carried
+    # a version. It is not "unknown" — the rule it was measured under is known.
+    schema_version = meta.get("frame_schema", 1)
+    if isinstance(schema_version, bool) or not isinstance(schema_version, int):
+        raise FrameSchemaError(
+            f"{frame_file} declares frame_schema {schema_version!r}, which is not "
+            f"an integer. Known versions: {SUPPORTED_FRAME_SCHEMAS}."
+        )
+    if schema_version not in SUPPORTED_FRAME_SCHEMAS:
+        raise FrameSchemaError(
+            f"{frame_file} was written under frame schema v{schema_version}; this "
+            f"reader understands {SUPPORTED_FRAME_SCHEMAS}. Refusing to read a "
+            "frame under rules it was not measured with."
+        )
+
+    declared_exclusions = meta.get("frame_exclusions") or ()
+    if isinstance(declared_exclusions, str):
+        declared_exclusions = (declared_exclusions,)
+
+    known = {
+        "dataset_id",
+        "id",
+        "lenses",
+        "unit",
+        "tier_ceiling",
+        "created",
+        "path",
+        "frame_schema",
+        "frame_exclusions",
+        "identity_scope",
+        "identity_files",
+        "identity_bytes",
+        "identity_manifest",
+        "checkout_scope",
+        "checkout_files",
+        "checkout_bytes",
+        "checkout_manifest",
+        "manifest_rule",
+    }
     return Frame(
         dataset_id=declared,
         path=frame_file.parent,
@@ -235,7 +297,26 @@ def read_frame(dataset_id: str) -> Frame:
         unit=meta.get("unit"),
         tier_ceiling=int(ceiling) if isinstance(ceiling, int) else None,
         created=meta.get("created"),
-        extra={k: v for k, v in meta.items() if k not in {"dataset_id", "id", "lenses", "unit", "tier_ceiling", "created", "path"}},
+        schema_version=schema_version,
+        exclusions=tuple(str(item) for item in declared_exclusions),
+        identity=_frame_identity(meta, "identity"),
+        checkout=_frame_identity(meta, "checkout"),
+        extra={k: v for k, v in meta.items() if k not in known},
+    )
+
+
+def _frame_identity(meta: dict[str, Any], prefix: str) -> FrameIdentity | None:
+    """Read one ``<prefix>_{scope,files,bytes,manifest}`` block, or ``None``."""
+    keys = (f"{prefix}_scope", f"{prefix}_files", f"{prefix}_bytes", f"{prefix}_manifest")
+    if not any(key in meta for key in keys):
+        return None
+    files = meta.get(f"{prefix}_files")
+    size = meta.get(f"{prefix}_bytes")
+    return FrameIdentity(
+        scope=str(meta.get(f"{prefix}_scope") or ""),
+        files=files if isinstance(files, int) and not isinstance(files, bool) else 0,
+        bytes=size if isinstance(size, int) and not isinstance(size, bool) else 0,
+        manifest=str(meta.get(f"{prefix}_manifest") or ""),
     )
 
 

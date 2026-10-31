@@ -42,6 +42,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
+from data_scout import frame as frame_identity
 from data_scout import notebook as nbwrite
 from data_scout import workspace
 from data_scout.ledger import Ledger, diff_lines
@@ -385,9 +386,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         problems = diff_lines(live_after, scratch_ledger.lines())
         ledger_problems = ledger.verify()
+        # A frame line is a ledger line, so the diff would otherwise read a v1
+        # vs v2 difference as a byte delta and call it drift. It is not drift:
+        # the two numbers were measured under different frame rules.
+        frame_problems = frame_identity.comparability_problems(
+            live_after, scratch_ledger.lines()
+        )
 
         # --- 4. the gate ----------------------------------------------------
-        if verification_errors or problems or ledger_problems:
+        if verification_errors or problems or ledger_problems or frame_problems:
             print("report-render: VERIFICATION FAILED — refusing to render", file=sys.stderr)
             for index, detail in verification_errors:
                 print(f"  verification cell {index}: {detail.splitlines()[0]}", file=sys.stderr)
@@ -395,6 +402,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"  {problem}", file=sys.stderr)
             for problem in ledger_problems[:20]:
                 print(f"  ledger {problem}", file=sys.stderr)
+            for problem in frame_problems:
+                print(f"  {problem}", file=sys.stderr)
             print(
                 "  The rendered HTML outlives a correction, so a known-bad "
                 "rendition is worse than no rendition. Nothing was rendered.",
