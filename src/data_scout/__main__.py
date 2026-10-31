@@ -9,8 +9,9 @@ would be a second service (``data-scout-genproj-scaffold`` §6.2):
     Same port, same process: the façade is generated from the registry, not
     deployed beside it.
 ``/healthz``
-    Liveness plus the two resolved roots and the belt size, so a misconfigured
-    mount is visible without opening a shell.
+    Liveness plus the two resolved roots, the belt size and the recorded
+    docling-serve observation, so a misconfigured mount — or a sidecar whose
+    timeouts cannot be seen from its API — is visible without opening a shell.
 ``/`` and ``/report/``
     The datasets index: what is available to scout, and the frozen artifacts
     each dataset already holds.
@@ -45,7 +46,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
-from data_scout import __version__, inventory, registry, workspace
+from data_scout import __version__, docling_service, inventory, registry, workspace
 from data_scout.mcp_server import MCP_PATH, build_server
 
 HOST_ENV = "DATA_SCOUT_HTTP_HOST"
@@ -271,13 +272,19 @@ def _json(payload: dict[str, Any], status: int = 200) -> JSONResponse:
 
 
 def healthz(request: Request) -> Response:
-    del request
+    # The probe ran once in build_app; a health tick must not re-probe the sidecar.
+    record = getattr(
+        request.app.state,
+        "docling",
+        {"state": "not_probed", "detail": "This app was not built by build_app()."},
+    )
     return _json(
         {
             "status": "ok",
             "version": __version__,
             "mcp": MCP_PATH,
             "belt": {"size": len(registry.BELT), "cap": registry.MAX_BELT_SIZE},
+            "docling": record,
             **index_payload(),
         }
     )
@@ -314,7 +321,7 @@ def icon(request: Request) -> Response:
     return FileResponse(asset_path(filename), media_type="image/png")
 
 
-def build_app() -> Starlette:
+def build_app(docling: dict[str, Any] | None = None) -> Starlette:
     """The one app: MCP at ``/mcp``, reports under ``/report/``, on one port.
 
     The MCP routes are mounted first, so ``/mcp`` is the server's own handler and
@@ -324,6 +331,7 @@ def build_app() -> Starlette:
     """
     from mcp.server.transport_security import TransportSecuritySettings
 
+    observation = docling if docling is not None else docling_service.observe()
     server = build_server()
     app = server.streamable_http_app(
         streamable_http_path=MCP_PATH,
@@ -343,6 +351,9 @@ def build_app() -> Starlette:
         ]
     )
     app.router.redirect_slashes = False
+    # One probe per process, taken before the first request: /healthz reports what
+    # startup saw rather than re-probing a sidecar on every liveness tick.
+    app.state.docling = observation
     return app
 
 
@@ -377,13 +388,15 @@ def serve(host: str | None = None, port: int | None = None) -> int:
 
     host = host or os.environ.get(HOST_ENV, DEFAULT_HOST)
     port = port or int(os.environ.get(PORT_ENV, DEFAULT_PORT))
+    observation = docling_service.observe()
+    print(docling_service.summary(observation), flush=True)
     print(
         f"data-scout {__version__} serving on http://{host}:{port} "
         f"(mcp={MCP_PATH}, belt={len(registry.BELT)}, workspace={workspace.workspace_root()}, "
         f"datasets={workspace.datasets_root()})",
         flush=True,
     )
-    uvicorn.run(build_app(), host=host, port=port, log_level="info")
+    uvicorn.run(build_app(docling=observation), host=host, port=port, log_level="info")
     return 0
 
 

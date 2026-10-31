@@ -89,6 +89,26 @@ def require_import(tool: str, module: str, *, extra: str, packages: str | None =
         )
 
 
+def seconds_env(name: str, default: float, *, tool: str) -> float:
+    """A duration from the environment, or ``default`` when it is unset.
+
+    Unset is a default, not a zero: an operator who never set a timeout has the
+    documented one, and that is a different fact from an operator who set ``0``
+    and disabled it. Blank counts as unset, because that is what an unexpanded
+    compose variable looks like.
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        raise RuntimeError(f"{tool}: {name}={raw!r} is not a number of seconds") from None
+    if value < 0:
+        raise RuntimeError(f"{tool}: {name}={raw!r} must not be negative")
+    return value
+
+
 def measurement(value: Any, n: int, unit_notes: str, **extra: Any) -> dict[str, Any]:
     """The one result shape: the number, what it is a number of, and the detail.
 

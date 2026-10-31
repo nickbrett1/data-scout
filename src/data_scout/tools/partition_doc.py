@@ -29,6 +29,7 @@ from data_scout.tools._common import (
     absent_is_not_zero,
     capped,
     measurement,
+    seconds_env,
 )
 
 DOCLING_URL_ENV = "DOCLING_URL"
@@ -52,7 +53,11 @@ POLL_INTERVAL_ENV = "DATA_SCOUT_DOCLING_POLL_INTERVAL"
 DEFAULT_TASK_TIMEOUT = 3600.0
 DEFAULT_POLL_INTERVAL = 2.0
 _MAX_POLL_INTERVAL = 5.0
-_READ_TIMEOUT = 600.0
+
+#: Per-request read timeout. It is *not* the deadline for a task: a poll returns
+#: in milliseconds, so this only bounds one slow request. The task deadline is
+#: ``TASK_TIMEOUT_ENV`` and that is what actually governs a conversion.
+READ_TIMEOUT = 600.0
 
 #: Task states that mean the result is fetchable, and states that mean it is not.
 _COMPLETED_STATES = frozenset({"success", "partial_success"})
@@ -200,20 +205,9 @@ def _parts_from_markdown(markdown: str) -> list[dict[str, Any]]:
 
 def _client(httpx: Any) -> Any:
     """One HTTP client for a whole conversion: submit, poll and result share it."""
-    return httpx.Client(timeout=httpx.Timeout(_READ_TIMEOUT, connect=15.0))
+    return httpx.Client(timeout=httpx.Timeout(READ_TIMEOUT, connect=15.0))
 
 
-def _float_env(name: str, default: float) -> float:
-    raw = os.environ.get(name, "").strip()
-    if not raw:
-        return default
-    try:
-        value = float(raw)
-    except ValueError:
-        raise RuntimeError(f"partition_doc: {name}={raw!r} is not a number of seconds") from None
-    if value < 0:
-        raise RuntimeError(f"partition_doc: {name}={raw!r} must not be negative")
-    return value
 
 
 def _check(response: Any, what: str) -> None:
@@ -258,7 +252,7 @@ def _poll(client: Any, base: str, task_id: str, *, deadline: float, timeout: flo
     its result URL — the work is still owned and still retrievable, just not this
     call's to wait for.
     """
-    interval = _float_env(POLL_INTERVAL_ENV, DEFAULT_POLL_INTERVAL)
+    interval = seconds_env(POLL_INTERVAL_ENV, DEFAULT_POLL_INTERVAL, tool="partition_doc")
     poll_url = f"{base}{_POLL_PATH.format(task_id=task_id)}"
     while True:
         response = client.get(poll_url)
@@ -320,7 +314,7 @@ def _convert(path: Path) -> tuple[dict[str, Any], str]:
     """
     httpx = _require_httpx()
     base = docling_url()
-    timeout = _float_env(TASK_TIMEOUT_ENV, DEFAULT_TASK_TIMEOUT)
+    timeout = seconds_env(TASK_TIMEOUT_ENV, DEFAULT_TASK_TIMEOUT, tool="partition_doc")
     deadline = time.monotonic() + timeout
     try:
         with _client(httpx) as client:

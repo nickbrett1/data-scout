@@ -78,6 +78,24 @@ def test_healthz_reports_the_two_resolved_roots_and_the_belt(server, roots):
     assert payload["belt"] == {"size": 15, "cap": registry.MAX_BELT_SIZE}
 
 
+def test_healthz_carries_the_startup_docling_probe(server):
+    """Item 5: the binding ceiling is named, and an unset DOCLING_URL is not a zero.
+
+    No ``DOCLING_URL`` is set for this process, so the record must say
+    ``not_configured`` and leave ``max_sync_wait.seconds`` as ``None`` — never 0
+    and never the sidecar's 120 s default.
+    """
+    status, _content_type, body = get(server, "/healthz")
+    assert status == 200
+    docling = json.loads(body)["docling"]
+
+    assert docling["state"] == "not_configured"
+    assert docling["max_sync_wait"]["seconds"] is None
+    assert docling["max_sync_wait"]["source"] == "unobservable"
+    assert docling["timeouts"]["binding"]["seconds"] == 3600.0
+    assert docling["timeouts"]["binding"]["env"] == "DATA_SCOUT_DOCLING_TASK_TIMEOUT"
+
+
 def test_the_index_lists_the_frozen_artifacts(server):
     status, _content_type, body = get(server, "/report/")
     assert status == 200
