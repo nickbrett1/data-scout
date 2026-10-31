@@ -171,6 +171,74 @@ findings_append({
 """
 
 
+RETIRED_V1_FRAME_LINE = {
+    "dataset_id": DATASET_ID,
+    "session": 1,
+    "unit": "files",
+    "tool": "frame",
+    "tool_version": "1",
+    "params": {},
+    "value": 934_881_648,
+    "n": 56,
+    "promoted": False,
+    "retire_reason": (
+        "one-off: dataset identity hash from scratch/frame_build.py; the belt has "
+        "no frame instrument. Recorded so the exact tree this session measured is "
+        "pinned."
+    ),
+}
+
+V2_FRAME_CELL = """
+from data_scout.tools import findings_append
+
+findings_append({
+    "unit": "files",
+    "tool": "frame",
+    "tool_version": "2",
+    "params": {"frame_schema": 2},
+    "value": 934_843_620,
+    "n": 8,
+    "promoted": False,
+    "retire_reason": "one-off: the test writes the v2 payload identity as a cell",
+})
+"""
+
+
+def test_a_retired_v1_line_beside_a_new_v2_line_still_verifies_clean(
+    dataset_workspace, capsys
+):
+    """The real ledger is ``[1(unpromoted), 2]``, not ``[1, 2]`` invented by a cell.
+
+    ``promoted`` is not part of the schema set the gate compares, but measuring it
+    against an unpromoted v1 line is the point: the v1 line is *already retired*
+    and must be carried through the re-execution copy unchanged, not appended by
+    the cell. Both sides end at the same schema set, so the gate result is ``[]``
+    — measured here rather than inferred from the set logic.
+    """
+    from data_scout import frame
+    from data_scout.ledger import Finding, Ledger
+
+    seeded = Finding.model_validate(RETIRED_V1_FRAME_LINE)
+    Ledger(workspace.ledger_path(DATASET_ID)).append(seeded)
+    notebook_path = build_session(dataset_workspace, cells=[V2_FRAME_CELL])
+
+    code = render.main([DATASET_ID, "--quiet"])
+    assert code == 0, capsys.readouterr().err
+
+    lines = ledger_lines()
+    assert len(lines) == 2
+    assert lines[0]["promoted"] is False
+    assert lines[0]["tool_version"] == "1"
+    assert frame.ledger_frame_schemas(lines) == [1, 2]
+
+    # The exact operands the gate sees: the seeded v1 line is copied into the
+    # scratch workspace before execution, so the re-execution appends the same
+    # v2 line to the same history. Both schema sets are [1, 2].
+    scratch_after = [lines[0], lines[1]]
+    assert frame.comparability_problems(lines, scratch_after) == []
+    assert notebook_path.with_suffix(".html").exists()
+
+
 def test_the_gate_says_not_comparable_instead_of_drifting_across_frame_schemas(
     dataset_workspace, capsys
 ):

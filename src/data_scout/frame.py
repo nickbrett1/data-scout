@@ -297,8 +297,15 @@ def render_frame(
     lenses: Sequence[str] = (),
     tier_ceiling: int = 1,
     created: str | None = None,
+    supersedes_reason: str | None = None,
 ) -> str:
-    """Render a v2 ``frame.md``. The exclusion set is written down, not implied."""
+    """Render a v2 ``frame.md``. The exclusion set is written down, not implied.
+
+    ``supersedes_reason`` is written only when an existing frame is replaced, so
+    the destruction of the old text is documented on the same disk as the new
+    text. It is a record, not a verdict: it says why the previous frame stopped
+    being the frame, not whether the new one is better.
+    """
     created = created or measurement.measured[:10]
     lines = [
         "---",
@@ -318,6 +325,8 @@ def render_frame(
         f"manifest_rule: {MANIFEST_RULE}",
         f"created: {created}",
     ]
+    if supersedes_reason:
+        lines.append(f"supersedes_reason: {supersedes_reason}")
     if lenses:
         lines.append("lenses:")
         lines.extend(f"  - {lens}" for lens in lenses)
@@ -347,24 +356,55 @@ def write_frame(
     tier_ceiling: int = 1,
     created: str | None = None,
     overwrite: bool = False,
+    overwrite_reason: str | None = None,
 ) -> Path:
     """Write a **new** frame. An existing frame is a record, not a draft.
 
     ``frame.md`` says what was measured under the rules in force at the time.
     Re-measuring an existing frame is a deliberate decision, so this refuses to
     replace one unless the caller says so explicitly.
+
+    ``overwrite=True`` is not enough on its own: destroying the old text with no
+    trail is the same defect shape as a measurement without its parameters.
+    Replacing a frame therefore requires a non-empty ``overwrite_reason``, which
+    is written into the new frame as ``supersedes_reason``. A reason without a
+    replacement is refused too — it would document a destruction that did not
+    happen.
     """
     path = workspace.frame_path(dataset_id)
     if path.exists() and not overwrite:
         raise FrameMeasureError(
             f"{path} already exists. A frame records what was measured under the "
             "rules in force then; re-measuring it is a decision, not an overwrite. "
-            "Pass overwrite=True only when that decision has been made."
+            "Pass overwrite=True and overwrite_reason=... only when that decision "
+            "has been made."
+        )
+    if overwrite:
+        if not overwrite_reason or not overwrite_reason.strip():
+            raise FrameMeasureError(
+                "overwrite=True requires a non-empty overwrite_reason: replacing "
+                f"{path} destroys the previous frame's text, and the record of why "
+                "must survive on disk (it is written as supersedes_reason)."
+            )
+        if "\n" in overwrite_reason or "\r" in overwrite_reason:
+            raise FrameMeasureError(
+                "overwrite_reason must be one line: it is written into the frame's "
+                "frontmatter, and a newline would turn the rest of the reason into "
+                "fields nobody declared."
+            )
+    elif overwrite_reason:
+        raise FrameMeasureError(
+            "overwrite_reason was given without overwrite=True; no frame is being "
+            "replaced, so there is no destruction to document."
         )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         render_frame(
-            measurement, lenses=lenses, tier_ceiling=tier_ceiling, created=created
+            measurement,
+            lenses=lenses,
+            tier_ceiling=tier_ceiling,
+            created=created,
+            supersedes_reason=overwrite_reason if overwrite else None,
         ),
         encoding="utf-8",
     )
@@ -516,6 +556,23 @@ def _line_schema(record: dict[str, Any]) -> int:
         return int(value)
     except (TypeError, ValueError):
         return -1
+
+
+def ledger_frame_schemas(lines: Sequence[str | dict]) -> list[int]:
+    """The set of frame schema versions present in a ledger, sorted.
+
+    ``tool: "frame"`` with no ``params.frame_schema`` is v1 (the phase-1 record);
+    a version that cannot be read is ``-1``, never silently dropped. An empty
+    list means **no frame line is present**, which is a different fact from
+    "a frame was measured" — that is why the inventory reports this beside
+    ``frame: true`` rather than folding it into it.
+
+    Multiple versions in one ledger are normal and not an error: the ledger is
+    append-only, so a v2 line sits beside the v1 line it makes incomparable.
+    A reader who sees the set can tell which rules the numbers beside it were
+    measured under; ``frame: true`` alone cannot.
+    """
+    return sorted({_line_schema(record) for record in _frame_lines(lines)})
 
 
 def comparability_problems(

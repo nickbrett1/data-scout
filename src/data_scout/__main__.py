@@ -233,6 +233,15 @@ def _dataset_html(dataset: dict[str, Any]) -> list[str]:
         status = "Available to scout"
         if dataset["in_root"] and not dataset["frame"]:
             status += " · no frame.md yet"
+    # A frame number carries its rules where a reader sees it: "frame: true" over
+    # a ledger holding both a v1 whole-checkout line and a v2 payload line hides
+    # the distinction that makes those numbers incomparable.
+    schemas = dataset.get("frame_schemas") or []
+    if schemas:
+        labels = ", ".join(f"v{version}" if version >= 0 else "v?" for version in schemas)
+        status += f" · frame schema {labels}"
+    elif dataset["frame"]:
+        status += " · frame.md present, no frame ledger line"
     status_class = "status scouted" if dataset["scouted"] else "status"
     parts.append(f'<p class="{status_class}">{_escape(status)}</p>')
 

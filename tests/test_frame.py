@@ -161,6 +161,38 @@ def test_writing_a_frame_will_not_replace_an_existing_record(dataset_with_payloa
         frame.write_frame(DATASET_ID, measurement)
 
 
+def test_replacing_a_frame_requires_a_reason_and_records_it(dataset_with_payload):
+    """``overwrite=True`` alone destroys the old text with no trail."""
+    measurement = frame.measure_frame(DATASET_ID, root=dataset_with_payload)
+    frame.write_frame(DATASET_ID, measurement)
+
+    with pytest.raises(frame.FrameMeasureError, match="overwrite_reason"):
+        frame.write_frame(DATASET_ID, measurement, overwrite=True)
+    with pytest.raises(frame.FrameMeasureError, match="non-empty overwrite_reason"):
+        frame.write_frame(DATASET_ID, measurement, overwrite=True, overwrite_reason="   ")
+    with pytest.raises(frame.FrameMeasureError, match="one line"):
+        frame.write_frame(
+            DATASET_ID, measurement, overwrite=True, overwrite_reason="v2\ninjected: field"
+        )
+
+    reason = "re-measured under v2: the v1 figure included .dvc scratch"
+    path = frame.write_frame(
+        DATASET_ID, measurement, overwrite=True, overwrite_reason=reason
+    )
+    text = path.read_text(encoding="utf-8")
+    assert f"supersedes_reason: {reason}" in text
+    assert workspace.read_frame(DATASET_ID).extra["supersedes_reason"] == reason
+
+
+def test_an_overwrite_reason_without_an_overwrite_is_refused(dataset_with_payload):
+    """A reason on a fresh frame would document a destruction that did not happen."""
+    measurement = frame.measure_frame(DATASET_ID, root=dataset_with_payload)
+    with pytest.raises(frame.FrameMeasureError, match="without overwrite=True"):
+        frame.write_frame(
+            DATASET_ID, measurement, overwrite_reason="nothing was replaced"
+        )
+
+
 # --------------------------------------------------------------------------
 # 2. v1 and v2 are not comparable — no delta, a reason
 # --------------------------------------------------------------------------
@@ -273,3 +305,22 @@ def test_frame_lines_under_the_same_schema_claim_no_incomparability():
 
 def test_a_ledger_without_a_frame_line_makes_no_comparability_claim():
     assert frame.comparability_problems(['{"tool": "file_census"}'], []) == []
+
+
+def test_ledger_frame_schemas_reports_the_set_with_history_visible():
+    """A v1 line beside a v2 line is the normal append-only outcome, not an error."""
+    lines = [
+        _frame_line(1, 934_881_648),
+        _frame_line(2, 934_843_620),
+        '{"tool": "file_census"}',
+        # No params.frame_schema is v1, the phase-1 shape.
+        json.dumps({"tool": "frame", "value": 1, "n": 1}),
+        # Unreadable version is unknown (-1), not dropped and not v1.
+        json.dumps({"tool": "frame", "value": 1, "n": 1, "params": {"frame_schema": "?"}}),
+    ]
+    assert frame.ledger_frame_schemas(lines) == [-1, 1, 2]
+
+
+def test_ledger_frame_schemas_is_empty_when_no_frame_line_is_present():
+    """Empty is "no line", which is not "schema zero"."""
+    assert frame.ledger_frame_schemas(['{"tool": "file_census"}']) == []

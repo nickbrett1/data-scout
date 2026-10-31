@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
 import pytest
 
-from data_scout import inventory
+from data_scout import inventory, workspace
 
 
 def make_dataset(root: Path, dataset_id: str = "demo-dataset") -> Path:
@@ -44,6 +45,36 @@ def test_the_frame_heading_becomes_the_display_name(roots, dataset_workspace):
     assert summary.title == "Harbour Archive"
     assert summary.name == "Harbour Archive"
     assert summary.as_record()["dataset_id"] == "demo-dataset"
+
+
+def test_the_summary_reports_which_frame_schemas_the_ledger_holds(
+    roots, dataset_workspace
+):
+    """``frame: true`` alone hides that a v1 and a v2 rule both produced numbers."""
+    make_dataset(roots.datasets)
+    lines = [
+        {"tool": "file_census", "value": 1, "n": 1},
+        {"tool": "frame", "value": 934_881_648, "n": 56, "params": {"frame_schema": 1}},
+        {"tool": "frame", "value": 934_843_620, "n": 8, "params": {"frame_schema": 2}},
+    ]
+    workspace.ledger_path("demo-dataset").write_text(
+        "\n".join(json.dumps(line) for line in lines) + "\n",
+        encoding="utf-8",
+    )
+
+    summary = inventory.summarize("demo-dataset", roots.dataset())
+
+    assert summary.frame is True
+    assert summary.frame_schemas == (1, 2)
+    assert summary.as_record()["frame_schemas"] == [1, 2]
+
+
+def test_no_ledger_reports_an_empty_set_not_a_schema(roots):
+    make_dataset(roots.datasets)
+    summary = inventory.summarize("demo-dataset", roots.dataset())
+    assert summary.frame_schemas == ()
+    assert summary.as_record()["frame_schemas"] == []
+    assert inventory.WorkspaceOnlyDataset("demo-dataset").as_record()["frame_schemas"] == []
 
 
 def test_discover_sorts_and_skips_hidden_directories_and_loose_files(roots):

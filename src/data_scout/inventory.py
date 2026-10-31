@@ -30,10 +30,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from data_scout.frame import ledger_frame_schemas
+from data_scout.ledger import Ledger
 from data_scout.workspace import (
     WorkspaceError,
     datasets_root,
     frame_path,
+    ledger_path,
     validate_dataset_id,
 )
 
@@ -61,6 +64,11 @@ class DatasetSummary:
     extensions: tuple[tuple[str, int], ...] = ()
     newest: str | None = None
     frame: bool = False
+    #: Which frame schema versions appear in this dataset's ledger. Empty means
+    #: no frame line is present — not that the number is zero. A frame measured
+    #: under v1 (whole checkout) and a later v2 line (payload) are different
+    #: rules, and the set makes that difference visible where a reader looks.
+    frame_schemas: tuple[int, ...] = ()
     title: str | None = None
     truncated: bool = False
     error: str | None = None
@@ -84,6 +92,7 @@ class DatasetSummary:
             "extensions": dict(self.extensions),
             "newest": self.newest,
             "frame": self.frame,
+            "frame_schemas": list(self.frame_schemas),
             "truncated": self.truncated,
             "error": self.error,
             "in_root": True,
@@ -111,6 +120,7 @@ class WorkspaceOnlyDataset:
             "extensions": {},
             "newest": None,
             "frame": frame_path(self.dataset_id).is_file(),
+            "frame_schemas": list(_frame_schemas(self.dataset_id)),
             "truncated": False,
             "error": None,
             "in_root": False,
@@ -174,6 +184,7 @@ def summarize(dataset_id: str, path: Path, *, max_entries: int = MAX_SCAN_ENTRIE
         extensions=tuple(extensions.most_common(TOP_EXTENSIONS)),
         newest=_iso_date(newest),
         frame=frame_file.is_file(),
+        frame_schemas=_frame_schemas(dataset_id),
         title=_frame_title(frame_file),
         truncated=truncated,
         error=error,
@@ -204,6 +215,22 @@ def discover(
             continue
         datasets.append(summarize(entry.name, entry, max_entries=max_entries))
     return datasets, None
+
+
+def _frame_schemas(dataset_id: str) -> tuple[int, ...]:
+    """Which frame schema versions this dataset's ledger holds.
+
+    Read from the ledger, not from ``frame.md``: the ledger is append-only, so it
+    is the only place the *history* of rules lives. ``frame.md`` shows the
+    current frame and says nothing about the v1 line still beside it.
+    """
+    try:
+        lines = Ledger(ledger_path(dataset_id)).lines()
+    except OSError:
+        # An unreadable ledger must not blank the index; the absence of a set
+        # is stated as an empty list rather than inventing a version.
+        return ()
+    return tuple(ledger_frame_schemas(lines))
 
 
 def _frame_title(frame_file: Path) -> str | None:

@@ -113,6 +113,24 @@ def test_index_json_is_the_same_index_for_machines(server):
     assert payload["datasets"][0]["scouted"] is True
 
 
+def test_the_index_reports_every_frame_schema_the_ledger_holds(server, dataset_workspace):
+    """A set, not a bool: a v1 line and a v2 line mean different rules."""
+    (dataset_workspace / "findings.jsonl").write_text(
+        json.dumps({"tool": "frame", "value": 200, "n": 56, "params": {"frame_schema": 1}})
+        + "\n"
+        + json.dumps({"tool": "frame", "value": 100, "n": 8, "params": {"frame_schema": 2}})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    _status, _content_type, body = get(server, "/report/index.json")
+    record = json.loads(body)["datasets"][0]
+    assert record["frame_schemas"] == [1, 2]
+
+    _status, _content_type, body = get(server, "/report/")
+    assert "frame schema v1, v2" in body
+
+
 def test_the_index_lists_datasets_that_are_available_to_scout(server, roots):
     waiting = roots.datasets / "waiting-dataset"
     (waiting / "docs").mkdir(parents=True)
