@@ -395,7 +395,7 @@ CATALOGUE: tuple[Profile, ...] = (
         use_case="transcription",
         summary=(
             "Spoken content: transcribe, diarise, then treat the transcripts as the corpus. "
-            "Included so the catalogue can say *no* out loud."
+            "Included so the catalogue can say no out loud."
         ),
         gates=(Criterion("audio_video_share", ">= 0.5", tool="file_census"),),
         moves=(
