@@ -381,6 +381,21 @@ figcaption { color: var(--muted); font-size: 0.85rem; margin-top: 0.35rem; }
 
 .finding-none { color: var(--muted); font-size: 0.85rem; margin: 0.5rem 0 0.2rem; }
 
+/* prose inside a row: markdown can put a table in there, so let it scroll
+   rather than push the card wider than the phone it is being read on */
+.finding-note { overflow-x: auto; }
+.finding-note table { font-size: 0.86rem; }
+.finding-note h2,
+.finding-note h3 { border-top: 0; padding-top: 0; margin-top: 1.2rem; }
+
+/* --- notes: what is true of the session, not of one line ----------------- */
+.report-notes {
+  margin-top: 3rem;
+  padding-top: 1.1rem;
+  border-top: 2px solid var(--rule);
+}
+.report-notes > h2:first-child { margin-top: 0; border-top: 0; padding-top: 0; }
+
 @media (max-width: 30em) {
   .findings-head { display: none; }
   .finding > summary {

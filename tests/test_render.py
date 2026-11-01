@@ -638,12 +638,45 @@ def test_commentary_without_a_ledger_is_still_rendered():
 
 
 def test_split_commentary_keeps_blocks_apart_and_allows_repeats():
-    lede, blocks = render.split_commentary(
+    lede, blocks, notes = render.split_commentary(
         "lede\n\n<!-- finding: 2 -->\nfirst\n\n<!-- finding: 2 -->\nsecond\n\n<!-- finding: 1 -->\none\n"
     )
     assert lede.strip() == "lede"
     assert blocks[2] == "first\n\nsecond"
     assert blocks[1] == "one"
+    assert notes == ""
+
+
+def test_notes_close_the_per_finding_part_and_stay_report_level():
+    lede, blocks, notes = render.split_commentary(
+        "lede\n\n<!-- finding: 1 -->\none\n\n<!-- notes -->\n\n## Method\n\nwhat would settle it\n"
+    )
+    assert lede.strip() == "lede"
+    assert blocks == {1: "one"}
+    assert notes.strip().startswith("## Method")
+
+
+def test_the_same_measurement_twice_is_one_row_with_both_lines():
+    """A re-run appends; the reader still sees one finding."""
+    from data_scout.ledger import Finding
+
+    first = Finding(
+        dataset_id="d", session=1, unit="files", tool="file_census", tool_version="1",
+        value=8, n=8, promoted=True, script="data_scout.tools.file_census",
+        params={"path": "/datasets/d/data"},
+    )
+    second = first.model_copy(update={"ts": first.ts.replace(microsecond=1)})
+    html = render.render_markdown(
+        "# d\n\nlede\n\n<!-- finding: 2 -->\n\nMeasured eight files.\n",
+        title="d",
+        findings=[first, second],
+    )
+    assert html.count('<details class="finding"') == 1
+    assert "1 finding" in html and "2 ledger lines" in html
+    # the marker named line 2, which is the re-append: it still finds the row
+    card = html[html.index('id="f1"'):]
+    assert "Measured eight files." in card
+    assert "line 1 · re-appended at line 2" in card
 
 
 def test_the_render_feeds_the_ledger_into_the_report(dataset_workspace, capsys):
@@ -662,3 +695,60 @@ def test_the_render_feeds_the_ledger_into_the_report(dataset_workspace, capsys):
     assert html.count('<details class="finding"') == 2
     assert "First line." in html
     assert "2 findings · 0 promoted" in html
+
+
+def test_notes_render_below_the_table_not_hung_off_the_last_row():
+    finding = _one_finding()
+    html = render.render_markdown(
+        "# d\n\nlede\n\n<!-- finding: 1 -->\n\nMeasured.\n\n<!-- notes -->\n\n## Method\n\nTwo pages only.\n",
+        title="d",
+        findings=[finding],
+    )
+    table = html.index('<section class="findings"')
+    notes = html.index('<section class="report-notes"')
+    assert table < notes
+    last_card = html[html.index('id="f1"'):notes]
+    assert "Two pages only." not in last_card
+    assert "Two pages only." in html[notes:]
+
+
+def _one_finding():
+    from data_scout.ledger import Finding
+
+    return Finding(
+        dataset_id="d",
+        session=1,
+        unit="files",
+        tool="file_census",
+        tool_version="1",
+        value=8,
+        n=8,
+        promoted=True,
+        script="data_scout.tools.file_census",
+        params={"path": "/datasets/d/data"},
+    )
+
+
+def test_report_only_rerenders_the_prose_without_executing_a_cell(dataset_workspace, capsys, monkeypatch):
+    """Wording is not a measurement: fixing a report must not append a line."""
+    build_session(
+        dataset_workspace,
+        cells=[APPEND_CELL],
+        report_text="# A test report\n\nSix files.\n\n<!-- finding: 1 -->\n\nFirst line.\n",
+    )
+    assert render.main([DATASET_ID, "--quiet"]) == 0, capsys.readouterr().err
+    before = workspace.ledger_path(DATASET_ID).read_text(encoding="utf-8")
+
+    (dataset_workspace / "report-2026-10-26.md").write_text(
+        "# A test report\n\nSix files.\n\n<!-- finding: 1 -->\n\nReworded.\n", encoding="utf-8"
+    )
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("--report-only must not execute the notebook")
+
+    monkeypatch.setattr(render, "execute_notebook", boom)
+    assert render.main([DATASET_ID, "--report-only"]) == 0, capsys.readouterr().err
+
+    html = (dataset_workspace / "report-2026-10-26.html").read_text(encoding="utf-8")
+    assert "Reworded." in html
+    assert workspace.ledger_path(DATASET_ID).read_text(encoding="utf-8") == before

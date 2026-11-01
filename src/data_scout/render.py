@@ -54,7 +54,7 @@ from typing import Any
 from data_scout import frame as frame_identity
 from data_scout import notebook as nbwrite
 from data_scout import workspace
-from data_scout.ledger import Ledger, diff_lines
+from data_scout.ledger import Ledger, diff_lines, normalized_line
 
 _MAX_PRINT_CHARS = 4000
 
@@ -309,9 +309,10 @@ def _contents(sections: list[tuple[int, str, str]]) -> str:
 
 
 #: A report is a table of the ledger with the prose hung off it. The marker
-#: below starts the commentary for one finding; the number is the finding's
-#: 1-based line in ``findings.jsonl``, which is also the row number a reader
-#: sees. Everything before the first marker is the report's lede.
+#: below starts the commentary for one finding; the number is a 1-based line in
+#: ``findings.jsonl`` for that finding — any of its lines, because a re-append
+#: gets the same row as the line it repeats. Everything before the first marker
+#: is the report's lede, and stays above the table.
 #:
 #:     # vg-books-2026-10
 #:
@@ -326,32 +327,45 @@ def _contents(sections: list[tuple[int, str, str]]) -> str:
 #: follows — so an older report is not a broken one.
 FINDING_MARKER = re.compile(r"^[ \t]*<!--[ \t]*finding:[ \t]*(\d+)[ \t]*-->[ \t]*$", re.MULTILINE)
 
+#: Prose a report needs that belongs to no single finding — the method, the
+#: gaps, what would settle them. Without this the last finding would collect
+#: everything the author had left to say, which is how a table becomes a wall
+#: of text again. Everything after this marker is rendered below the table.
+NOTES_MARKER = re.compile(r"^[ \t]*<!--[ \t]*notes[ \t]*-->[ \t]*$", re.MULTILINE)
+
 #: The params worth showing in the row itself, in this order. Everything else
 #: is in the row's detail: the row answers "what is this number", the detail
 #: answers "how was it measured".
 _ROW_PARAMS = ("path", "document", "measure", "attribute", "aggregate", "probe", "suffix")
 
 
-def split_commentary(markdown: str) -> tuple[str, dict[int, str]]:
-    """The lede, and the commentary for each finding number.
+def split_commentary(markdown: str) -> tuple[str, dict[int, str], str]:
+    """The lede, the commentary per finding number, and the trailing notes.
 
     A block runs from its marker to the next one, so a finding's prose can be
     anything markdown can express — including its own headings and tables —
-    without any nesting rule to get wrong.
+    without any nesting rule to get wrong. ``<!-- notes -->`` closes the
+    per-finding part: it is where the report says things that are true of the
+    session rather than of one line.
     """
-    markers = list(FINDING_MARKER.finditer(markdown))
+    markers = [*FINDING_MARKER.finditer(markdown), *NOTES_MARKER.finditer(markdown)]
+    markers.sort(key=lambda match: match.start())
     if not markers:
-        return markdown, {}
+        return markdown, {}, ""
     lede = markdown[: markers[0].start()]
     blocks: dict[int, str] = {}
+    notes = ""
     for position, marker in enumerate(markers):
         end = markers[position + 1].start() if position + 1 < len(markers) else len(markdown)
-        number = int(marker.group(1))
         text = markdown[marker.end() : end].strip()
         if not text:
             continue
+        if marker.re is NOTES_MARKER:
+            notes = f"{notes}\n\n{text}" if notes else text
+            continue
+        number = int(marker.group(1))
         blocks[number] = f"{blocks[number]}\n\n{text}" if number in blocks else text
-    return lede, blocks
+    return lede, blocks, notes
 
 
 def _format_value(value: Any) -> str:
@@ -380,9 +394,15 @@ def _row_params(params: dict[str, Any]) -> str:
     return " · ".join(f"{key}={_shorten(key, params[key])}" for key in keys[:2])
 
 
-def _detail_rows(finding: Any) -> list[str]:
+def _detail_rows(finding: Any, lines: Sequence[int] = ()) -> list[str]:
     """Everything the row does not show: parameters, provenance, the decision."""
     parts = ['<dl class="f-facts">']
+    if lines:
+        reappends = ", ".join(str(line) for line in lines[1:])
+        where = f"line {lines[0]}"
+        if reappends:
+            where += f" · re-appended at line{', ' if len(lines) > 2 else ''} {reappends}"
+        parts.append(f"<dt>ledger</dt><dd>{_escape(where)}</dd>")
     parts.append(
         f'<dt>measured</dt><dd><code>{_escape(finding.tool)}</code> '
         f'v{_escape(finding.tool_version)} · session {finding.session} · '
@@ -409,7 +429,9 @@ def _detail_rows(finding: Any) -> list[str]:
     return parts
 
 
-def _finding_html(number: int, finding: Any, commentary: str, render_block: Any) -> str:
+def _finding_html(
+    number: int, finding: Any, lines: Sequence[int], commentary: str, render_block: Any
+) -> str:
     """One row of the table: a line you can scan, that opens into the prose."""
     what = _row_params(finding.params)
     summary = [
@@ -423,7 +445,7 @@ def _finding_html(number: int, finding: Any, commentary: str, render_block: Any)
         f'<span class="f-n">n={finding.n:,}</span>',
         f'<span class="f-session">s{finding.session}</span>',
     ]
-    body = _detail_rows(finding)
+    body = _detail_rows(finding, lines)
     if commentary:
         body.append(f'<div class="finding-note">{render_block(commentary)}</div>')
     else:
@@ -436,28 +458,75 @@ def _finding_html(number: int, finding: Any, commentary: str, render_block: Any)
     )
 
 
-def _findings_html(findings: Sequence[Any], commentary: dict[int, str], render_block: Any) -> str:
-    """The table itself, with a one-line count of what the ledger holds."""
-    promoted = sum(1 for finding in findings if finding.promoted)
-    tools = sorted({finding.tool for finding in findings})
+def _distinct_rows(findings: Sequence[Any]) -> list[tuple[Any, list[int]]]:
+    """One row per finding, not per line.
+
+    The ledger is append-only and a sweep can be re-run, so the same
+    measurement legitimately appears on several lines — this session has 46
+    lines and 21 findings. A reader wants the finding; the lines it came from
+    belong in its detail. Row order is first-recorded order, which is also the
+    order the session measured things in.
+    """
+    rows: list[tuple[Any, list[int]]] = []
+    seen: dict[str, int] = {}
+    for line_number, finding in enumerate(findings, start=1):
+        key = normalized_line(finding.to_json())
+        if key in seen:
+            rows[seen[key]][1].append(line_number)
+            continue
+        seen[key] = len(rows)
+        rows.append((finding, [line_number]))
+    return rows
+
+
+def _findings_html(
+    findings: Sequence[Any], commentary: dict[int, str], render_block: Any
+) -> tuple[str, set[int]]:
+    """The table itself, with a one-line count of what the ledger holds.
+
+    Returns the HTML and the marker numbers it consumed, so the caller can tell
+    a stale marker (a line that no longer exists) from a used one.
+    """
+    rows = _distinct_rows(findings)
+    row_of_line = {
+        line: row_number
+        for row_number, (_finding, lines) in enumerate(rows, start=1)
+        for line in lines
+    }
+    used: set[int] = set()
+    blocks: dict[int, str] = {}
+    for number, text in commentary.items():
+        row_number = row_of_line.get(number, number if 1 <= number <= len(rows) else None)
+        if row_number is None:
+            continue
+        used.add(number)
+        blocks[row_number] = f"{blocks[row_number]}\n\n{text}" if row_number in blocks else text
+
+    promoted = sum(1 for finding, _lines in rows if finding.promoted)
+    tools = sorted({finding.tool for finding, _lines in rows})
     header = (
         '<div class="findings-head" aria-hidden="true">'
         '<span class="f-no">#</span><span class="f-tool">finding</span>'
         '<span class="f-value">value</span><span class="f-unit">unit</span>'
         '<span class="f-n">n</span><span class="f-session">s</span></div>'
     )
-    rows = "".join(
-        _finding_html(number, finding, commentary.get(number, ""), render_block)
-        for number, finding in enumerate(findings, start=1)
+    body = "".join(
+        _finding_html(row_number, finding, lines, blocks.get(row_number, ""), render_block)
+        for row_number, (finding, lines) in enumerate(rows, start=1)
+    )
+    lines_total = sum(len(lines) for _finding, lines in rows)
+    reappends = (
+        f" · {lines_total} ledger lines" if lines_total > len(rows) else ""
     )
     summary = (
-        f'<p class="findings-count">{len(findings)} finding'
-        f'{"" if len(findings) == 1 else "s"} · {promoted} promoted · '
-        f'{len(findings) - promoted} retired · {_escape(", ".join(tools))}</p>'
+        f'<p class="findings-count">{len(rows)} finding'
+        f'{"" if len(rows) == 1 else "s"} · {promoted} promoted · '
+        f"{len(rows) - promoted} retired{reappends} · {_escape(', '.join(tools))}</p>"
     )
     return (
         '<section class="findings" aria-label="Findings">'
-        f"{summary}{header}{rows}</section>"
+        f"{summary}{header}{body}</section>",
+        used,
     )
 
 
@@ -497,8 +566,7 @@ def render_markdown(
     attached to a line is still rendered, under a heading that says so, because
     a report must not be able to lose text by being restructured.
     """
-    lede, commentary = split_commentary(markdown)
-    attached = dict(commentary)
+    lede, commentary, notes = split_commentary(markdown)
 
     parser = _render_parser()
     ids, sections = _structure(parser.parse(lede))
@@ -525,8 +593,9 @@ def render_markdown(
             for number, text in sorted(commentary.items())
         )
     elif findings:
-        extras.append(_findings_html(findings, attached, render_block))
-        orphans = {number: text for number, text in commentary.items() if number not in range(1, len(findings) + 1)}
+        table, used = _findings_html(findings, commentary, render_block)
+        extras.append(table)
+        orphans = {number: text for number, text in commentary.items() if number not in used}
         if orphans:
             extras.append('<h2 id="unattached">Commentary with no ledger line</h2>')
             extras.append(
@@ -537,6 +606,8 @@ def render_markdown(
                 f'<h3 id="unattached-{number}">Finding {number}</h3>{render_block(text)}'
                 for number, text in sorted(orphans.items())
             )
+    if notes:
+        extras.append(f'<section class="report-notes" id="notes">{render_block(notes)}</section>')
 
     toc = _contents(sections)
     if toc:
@@ -658,6 +729,26 @@ def _meta_line(dataset_id: str, session: int, source: str) -> str:
     return f"data-scout · dataset {dataset_id} · session {session} · {source} · rendered {stamp}"
 
 
+def write_report(dataset_id: str, session: int, report_path: Path, ledger: Ledger) -> Path:
+    """Render ``report-*.md`` against the ledger as it stands.
+
+    A report is the deliverable and lives at the dataset root, even if
+    ``--report`` named it from somewhere else on disk. The ledger is its spine:
+    every row is a line as recorded, and the markdown hangs commentary off it.
+    """
+    report_html = workspace.artifact_path(dataset_id, report_path.with_suffix(".html").name)
+    report_html.write_text(
+        render_markdown(
+            report_path.read_text(encoding="utf-8"),
+            title=report_path.stem,
+            meta=_meta_line(dataset_id, session, report_path.name),
+            findings=ledger.findings(),
+        ),
+        encoding="utf-8",
+    )
+    return report_html
+
+
 # --------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------
@@ -677,6 +768,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--workspace", default=None, help="override DATA_SCOUT_WORKSPACE")
     parser.add_argument("--timeout", type=int, default=1800, help="per-cell execution timeout, seconds")
     parser.add_argument("--verify-only", action="store_true", help="execute and verify, but render nothing")
+    parser.add_argument(
+        "--report-only",
+        action="store_true",
+        help="re-render report-*.md against the ledger as it stands, executing nothing",
+    )
     parser.add_argument("--quiet", action="store_true", help="do not print per-cell output")
     args = parser.parse_args(argv)
 
@@ -695,6 +791,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"report-render: dataset {dataset_id}, session {session}")
     print(f"report-render: notebook {notebook_path}")
     print(f"report-render: ledger {ledger.path} ({len(ledger.lines())} lines)")
+
+    if args.report_only:
+        # Prose is not a measurement: re-rendering a report against the ledger
+        # as it already stands must not execute anything, or every wording fix
+        # would append the session's lines a second time and the gate would
+        # have to be rolled back by hand.
+        report_path = pick_report(dataset_id, args.report)
+        if report_path is None:
+            print("report-render: no report-*.md in the workspace; nothing to render", file=sys.stderr)
+            return 2
+        print(f"report-render: wrote {write_report(dataset_id, session, report_path, ledger)}")
+        return 0
 
     # --- 3a. snapshot the live workspace BEFORE anything executes -----------
     scratch_parent = Path(tempfile.mkdtemp(prefix="data-scout-verify-"))
@@ -832,23 +940,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if report_path is None:
             print("report-render: no report-*.md in the workspace; nothing to render for the deliverable")
         else:
-            # A report is the deliverable and lives at the dataset root, even if
-            # `--report` named it from somewhere else on disk.
-            report_html = workspace.artifact_path(
-                dataset_id, report_path.with_suffix(".html").name
-            )
-            report_html.write_text(
-                render_markdown(
-                    report_path.read_text(encoding="utf-8"),
-                    title=report_path.stem,
-                    meta=_meta_line(dataset_id, session, report_path.name),
-                    # The ledger is the report's spine: every row is a line as
-                    # recorded, and the markdown hangs commentary off it.
-                    findings=ledger.findings(),
-                ),
-                encoding="utf-8",
-            )
-            rendered.append(report_html)
+            rendered.append(write_report(dataset_id, session, report_path, ledger))
 
         # --- 6 is above, deliberately: the agent reads cells, not a summary.
         for path in rendered:

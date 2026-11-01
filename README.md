@@ -164,6 +164,48 @@ docker compose exec data-scout report-render <dataset-id> [--session N] [--verif
 report-render <dataset-id>          # in the dev environment, after `pip install -e .`
 ```
 
+#### The report is the ledger
+
+A report is not prose with numbers in it. The ledger is the spine: `findings.jsonl`
+becomes a table of scannable rows — number, instrument, value, unit, `n`, session — and
+each row is a `<details>` that opens into the commentary the markdown attaches to it.
+The whole authoring contract is one marker:
+
+```markdown
+# vg-books-2026-10 — session 1
+
+Eight works, 934,843,620 bytes. The table below is the report.
+
+<!-- finding: 14 -->
+
+8 files, 934,843,620 B, manifest `2343494059…76a3`: the payload frame, and the
+identity this session stands on.
+```
+
+- The number is a **1-based line in `findings.jsonl`** for that finding. Any of its
+  lines will do: a re-append gets the same row as the line it repeats, so a re-run
+  sweep does not become thirty duplicate rows, and the row's detail names every line.
+- Everything before the first marker is the **lede** and stays above the table.
+- A block runs to the next marker, so commentary can be any markdown — headings, lists,
+  a table of its own.
+- `<!-- notes -->` closes the per-finding part. What is true of the *session* — method,
+  cost, what would settle an open question — goes there and is rendered below the
+  table, rather than hung off whichever finding happened to be last.
+
+Nothing is lossy: a report with no markers still renders (lede, table, prose), and a
+marker naming a line the ledger does not have is shown under *"Commentary with no
+ledger line"* rather than dropped.
+
+Editing the prose does not need a measurement, so it does not need an execution:
+
+```bash
+docker compose exec data-scout report-render <dataset-id> --report-only
+```
+
+That re-renders `report-*.md` against the ledger as it already stands. A full render
+would re-execute the notebook and append the session's lines a second time, which is
+why the gate exists and why a wording fix must not go through it.
+
 The frozen artifacts are served on the single published port: `/report/…` (HTML) and
 `/healthz`, alongside the MCP façade at `/mcp`. `/a2a` is a documented seam, not an agent
 loop — the tools are the attachable surface, and the intelligence is a recipe driving them.
