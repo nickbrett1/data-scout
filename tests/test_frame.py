@@ -324,3 +324,135 @@ def test_ledger_frame_schemas_reports_the_set_with_history_visible():
 def test_ledger_frame_schemas_is_empty_when_no_frame_line_is_present():
     """Empty is "no line", which is not "schema zero"."""
     assert frame.ledger_frame_schemas(['{"tool": "file_census"}']) == []
+
+
+# --------------------------------------------------------------------------
+# 4. append-once at promotion — frame lines only, and keyed on the pin
+# --------------------------------------------------------------------------
+
+PIN_A = "a" * 40
+PIN_B = "b" * 40
+
+
+def _frame_identity_line(
+    *,
+    ts: str = "2026-11-01T00:00:00Z",
+    commit: str | None = PIN_A,
+    value: int = 934_843_620,
+    checkout_files: int = 12,
+) -> str:
+    """A frame identity line shaped exactly as ``identity_finding`` writes one."""
+    return json.dumps(
+        {
+            "ts": ts,
+            "dataset_id": DATASET_ID,
+            "dataset_commit": commit,
+            "session": 1,
+            "unit": "files",
+            "tool": "frame",
+            "tool_version": "3",
+            "params": {
+                "frame_schema": 3,
+                "identity_scope": "data",
+                "identity_files": 8,
+                "checkout_files": checkout_files,
+                "checkout_bytes": 934_848_934,
+                "dataset_pinned": commit is not None,
+                "dataset_commit": commit,
+                "dataset_manifest_hash": "cab6e809cb982eba178a0f3a631e16d6.dir",
+                "dataset_files": 8,
+                "dataset_bytes": 934_843_620,
+            },
+            "value": value,
+            "n": 8,
+            "promoted": False,
+            "retire_reason": "one-off: a frame line fixture",
+        },
+        sort_keys=True,
+    )
+
+
+def _tool_line(*, ts: str = "2026-11-01T00:00:00Z", value: float = 0.9) -> str:
+    return json.dumps(
+        {
+            "ts": ts,
+            "dataset_id": DATASET_ID,
+            "session": 1,
+            "unit": "file",
+            "tool": "file_census",
+            "tool_version": "1",
+            "params": {"per_chars": 1000},
+            "value": value,
+            "n": 2,
+            "promoted": False,
+            "retire_reason": "one-off: a non-frame fixture",
+        },
+        sort_keys=True,
+    )
+
+
+def test_an_unchanged_frame_appends_once_across_ts():
+    """(a) Same content, different ts, same pin → the second append is skipped."""
+    first = _frame_identity_line(ts="2026-11-01T00:00:00Z")
+    second = _frame_identity_line(ts="2026-11-01T01:02:03Z")
+
+    keep, skipped = frame.promote_once([second], [first])
+    assert keep == []
+    assert skipped == [second]
+
+
+def test_a_repin_appends_even_when_the_normalized_content_is_identical():
+    """(b) The trap: same content, same ts, different dataset_commit → ACCEPTED.
+
+    ``dataset_commit`` is dropped from ``normalized_line`` by §3.5a, so keying
+    on that would suppress the one line that records the bytes moving. This
+    test is what proves the dedupe key is not that key.
+    """
+    first = _frame_identity_line(ts="2026-11-01T00:00:00Z", commit=PIN_A)
+    repinned = _frame_identity_line(ts="2026-11-01T00:00:00Z", commit=PIN_B)
+
+    # The trap, made concrete: §3.5a's reproduction key drops the *top-level*
+    # dataset_commit, so a line whose pin lives only there normalizes
+    # identically across a re-pin. (The current frame writer also puts the pin
+    # in ``params``, which is exactly the kind of writer detail the dedupe key
+    # must not depend on.)
+    from data_scout.ledger import normalized_line
+
+    def top_level_only(line: str) -> str:
+        data = json.loads(line)
+        for name in frame.FRAME_PIN_FIELDS:
+            data["params"].pop(name, None)
+        return json.dumps(data, sort_keys=True)
+
+    assert normalized_line(top_level_only(first)) == normalized_line(
+        top_level_only(repinned)
+    )
+
+    # The append-once key must not fall into it.
+    assert frame.frame_dedup_key(first) != frame.frame_dedup_key(repinned)
+
+    keep, skipped = frame.promote_once([repinned], [first])
+    assert keep == [repinned]
+    assert skipped == []
+
+
+def test_a_non_frame_tool_appends_twice_with_identical_content():
+    """(c) The rule is frame-only: two identical findings are two events."""
+    first = _tool_line()
+    second = _tool_line(ts="2026-11-01T01:02:03Z")
+
+    keep, skipped = frame.promote_once([second], [first])
+    assert keep == [second]
+    assert skipped == []
+
+
+def test_a_genuine_remeasure_still_appends_under_the_same_pin():
+    """(d) A changed identity/measurement field is a new measurement."""
+    first = _frame_identity_line(value=934_843_620, checkout_files=12)
+    remeasured = _frame_identity_line(
+        ts="2026-11-01T00:00:00Z", value=934_843_621, checkout_files=13
+    )
+
+    keep, skipped = frame.promote_once([remeasured], [first])
+    assert keep == [remeasured]
+    assert skipped == []

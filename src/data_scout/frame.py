@@ -523,6 +523,91 @@ def identity_finding(
 
 
 # --------------------------------------------------------------------------
+# append-once at promotion (frame lines only)
+# --------------------------------------------------------------------------
+
+#: The five pin fields that say *which bytes* a frame measurement describes.
+#: They are part of :func:`frame_dedup_key` on purpose — see its docstring.
+FRAME_PIN_FIELDS: tuple[str, ...] = (
+    "dataset_pinned",
+    "dataset_commit",
+    "dataset_manifest_hash",
+    "dataset_files",
+    "dataset_bytes",
+)
+
+
+def frame_dedup_key(line: str | dict[str, Any]) -> str:
+    """The append-once identity of a frame line: content minus ``ts``, plus the pin.
+
+    This is **not** ``ledger.normalized_line``'s default key, and must not be
+    made one. That key deliberately drops ``dataset_commit`` so the §9
+    reproduction gate does not read a legitimate re-pin as a failure to
+    reproduce (§3.5a). Reusing that drop set here would invert this rule: a
+    genuine mid-session re-pin can produce identical normalized content, so the
+    second frame line — the one that says the bytes moved — would be silently
+    suppressed while ``frame.md`` and the checkout had moved. That is the exact
+    defect this feature exists to close, mirrored.
+
+    So the key is the whole line with only ``ts`` removed (every other field,
+    ``dataset_commit`` included, is identity), and the five pin fields are
+    lifted into it explicitly rather than trusted to be present in ``params``.
+    """
+    data = json.loads(line) if isinstance(line, str) else dict(line)
+    params = data.get("params")
+    if not isinstance(params, dict):
+        params = {}
+    data.pop("ts", None)
+    data["frame_pin"] = {
+        name: data.get(name, params.get(name)) for name in FRAME_PIN_FIELDS
+    }
+    return json.dumps(data, sort_keys=True, separators=(",", ":"))
+
+
+def is_frame_line(line: str | dict[str, Any]) -> bool:
+    """True when this ledger line is the frame identity line."""
+    if isinstance(line, str):
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            return False
+    else:
+        record = line
+    return isinstance(record, dict) and record.get("tool") == FRAME_TOOL
+
+
+def promote_once(
+    appended: Sequence[str], existing: Sequence[str]
+) -> tuple[list[str], list[str]]:
+    """Split staged appends into ``(to_append, skipped)`` under append-once.
+
+    **Frame lines only.** The ledger holds at most one current frame statement
+    per distinct measurement, so re-rendering an unchanged notebook does not
+    grow a duplicate frame line. The rule is deliberately not applied to other
+    tools: two identical findings from two executions are two events, and both
+    stay.
+
+    "Distinct measurement" is :func:`frame_dedup_key` — content minus ``ts``
+    plus the pin. A re-pin is therefore a new measurement and appends; so is a
+    genuine re-measure that changes any identity or measurement field.
+    """
+    seen = {frame_dedup_key(line) for line in existing if is_frame_line(line)}
+    keep: list[str] = []
+    skipped: list[str] = []
+    for line in appended:
+        if not is_frame_line(line):
+            keep.append(line)
+            continue
+        key = frame_dedup_key(line)
+        if key in seen:
+            skipped.append(line)
+            continue
+        seen.add(key)
+        keep.append(line)
+    return keep, skipped
+
+
+# --------------------------------------------------------------------------
 # comparability
 # --------------------------------------------------------------------------
 

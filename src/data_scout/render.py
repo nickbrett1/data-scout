@@ -439,9 +439,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         # the notebook would have written had it executed against the live
         # workspace, and exactly once.
         appended = staged_after[len(before):]
-        for line in appended:
+        # Append-once for frame lines: an unchanged notebook re-rendered must
+        # not grow a duplicate frame statement. The key includes the pin
+        # (frame_dedup_key), so a re-pin still appends. Every other tool keeps
+        # ordinary append-only semantics.
+        to_append, duplicates = frame_identity.promote_once(appended, before)
+        for line in to_append:
             ledger.append_line(line)
-        added = len(appended)
+        added = len(to_append)
+        if duplicates:
+            print(
+                f"report-render: skipped {len(duplicates)} frame line(s) already "
+                "in the live ledger (append-once, frame only)"
+            )
         print(
             f"report-render: verification passed "
             f"({len(before) + added} lines, {added} appended by this render)"

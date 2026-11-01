@@ -366,3 +366,52 @@ def test_a_passing_render_appends_the_staged_line_once_byte_for_byte(dataset_wor
     # preserve those bytes rather than re-deriving them.
     assert lines[0] == Finding.from_json(lines[0]).to_json()
     assert json.loads(lines[0])["params"] == {"per_chars": 1000}
+
+
+# --------------------------------------------------------------------------
+# append-once at promotion: a re-rendered frame cell does not duplicate
+# --------------------------------------------------------------------------
+
+FRAME_APPEND_CELL = """
+from data_scout.tools import findings_append
+
+findings_append({
+    "unit": "files",
+    "tool": "frame",
+    "tool_version": "3",
+    "params": {
+        "frame_schema": 3,
+        "identity_scope": "data",
+        "identity_files": 8,
+        "identity_manifest": "abc",
+        "checkout_scope": ".",
+        "checkout_files": 12,
+        "checkout_bytes": 934848934,
+        "checkout_manifest": "def",
+        "dataset_pinned": False,
+        "dataset_commit": None,
+        "dataset_manifest_hash": None,
+        "dataset_files": None,
+        "dataset_bytes": None,
+    },
+    "value": 934843620,
+    "n": 8,
+    "promoted": False,
+    "retire_reason": "one-off: the test writes one unchanged frame line",
+})
+"""
+
+
+def test_a_re_rendered_frame_line_is_appended_once(dataset_workspace, capsys):
+    """The defect commit 7 closes: rendering an unchanged notebook again grew
+    a duplicate frame line (identical modulo ``ts``). Frame lines are now
+    append-once; a re-pin still appends (see test_frame.py)."""
+    build_session(dataset_workspace, cells=[FRAME_APPEND_CELL])
+
+    assert render.main([DATASET_ID, "--quiet"]) == 0, capsys.readouterr().err
+    assert len(ledger_lines()) == 1
+
+    assert render.main([DATASET_ID, "--quiet"]) == 0, capsys.readouterr().err
+    second_out = capsys.readouterr().out
+    assert len(ledger_lines()) == 1, "an unchanged frame line was appended twice"
+    assert "skipped 1 frame line" in second_out
