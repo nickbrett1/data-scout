@@ -9,7 +9,9 @@ did not close cannot be written down.
 ``ts``, ``dataset_id`` and ``session`` are filled from the environment when the
 record omits them: ``report-render`` sets ``DATA_SCOUT_DATASET_ID`` and
 ``DATA_SCOUT_SESSION`` for the kernel, so a cell can append a complete line
-without repeating the frame in every call.
+without repeating the frame in every call. ``dataset_commit`` is filled from the
+dataset's pin file (:func:`data_scout.workspace.read_pin`) at append time — the
+pin the line actually used — and a record that supplies its own commit wins.
 
 :func:`derive_finding` is the other half: it **derives** one line from a
 measurement instead of copying one that already exists. It is ledger-blind by
@@ -185,6 +187,16 @@ def findings_append(
                 "notebook that produced it."
             )
         payload["session"] = resolved_session
+
+    # The pin the line used. Filled here, after `dataset_id` is resolved, and
+    # only when the record did not supply one — a record-supplied commit wins.
+    # `read_pin` raising propagates: a corrupt pin must fail the append, never
+    # degrade to null, which would turn a broken store into plausible-looking
+    # provenance. Deliberately no per-process cache: a mid-session re-commit
+    # then produces a mixed ledger, and the move is visible (ledger_pins).
+    if "dataset_commit" not in payload:
+        pin = workspace.read_pin(payload["dataset_id"])
+        payload["dataset_commit"] = pin.dataset_commit if pin else None
 
     finding = Finding.model_validate(payload)
     path = Path(ledger_path) if ledger_path is not None else workspace.ledger_path(finding.dataset_id)
