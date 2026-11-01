@@ -619,6 +619,279 @@ body.jp-Notebook,
   border-color: var(--accent);
 }
 
+.brief-headline {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: right;
+}
+
+/* --- the catalogue: every profile scored, not just the winner -----------
+ *
+ * A conclusion you cannot review is a conclusion you have to believe. So the
+ * brief prints all eight profiles in catalogue order — fits, partial,
+ * disqualified and unknown alike — and each criterion shows the test, the
+ * observation, the ledger line, and (when nothing was measured) the instrument
+ * that would settle it. Disqualified profiles collapse to one line: a ruled-out
+ * use-case is information, not a task.
+ */
+
+.matrix {
+  margin: 0 0 2rem;
+}
+
+.prof {
+  margin: 0 0 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.prof.o-fits {
+  border-left-color: var(--ok);
+}
+
+.prof.o-partial {
+  border-left-color: var(--accent);
+}
+
+.prof.o-unknown {
+  border-left-color: var(--warn);
+  background: var(--surface-2);
+}
+
+.prof.o-disqualified {
+  border-left-color: var(--faint);
+  opacity: 0.85;
+}
+
+.prof > summary {
+  display: block;
+  padding: 0.7rem 0.9rem;
+  min-height: var(--tap);
+  cursor: pointer;
+  list-style: none;
+}
+
+.prof > summary::-webkit-details-marker {
+  display: none;
+}
+
+.prof-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content max-content;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.prof-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.badge {
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.b-fits {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.b-partial {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.b-unknown {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.b-disqualified {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.prof .f-caret {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-right: 2px solid var(--faint);
+  border-bottom: 2px solid var(--faint);
+  transform: rotate(45deg);
+  transition: transform 0.15s ease;
+}
+
+.prof[open] .f-caret {
+  transform: rotate(225deg);
+}
+
+.prof-body {
+  padding: 0 0.9rem 0.9rem;
+}
+
+.prof-summary {
+  margin: 0 0 0.7rem;
+  color: #cbd5e1;
+  font-size: 0.88rem;
+}
+
+.cells {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cell {
+  display: grid;
+  grid-template-columns: 1.1rem minmax(0, 1fr) max-content;
+  gap: 0.1rem 0.5rem;
+  align-items: baseline;
+  padding: 0.3rem 0;
+  border-top: 1px solid var(--border);
+  font-size: 0.82rem;
+}
+
+.cell-test {
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.cell-observed {
+  color: var(--fg);
+  text-align: right;
+}
+
+.cell .mark {
+  font-weight: 700;
+}
+
+.c-pass .mark {
+  color: var(--ok);
+}
+
+.c-fail .mark {
+  color: var(--bad);
+}
+
+.c-unknown .mark {
+  color: var(--warn);
+}
+
+.cell-task {
+  grid-column: 2 / -1;
+  color: var(--faint);
+  font-size: 0.74rem;
+}
+
+.c-unknown .cell-task {
+  color: var(--warn);
+}
+
+.cell .brief-cite {
+  grid-column: 2 / -1;
+}
+
+.profile-label {
+  margin: 0.8rem 0 0.25rem;
+  color: var(--faint);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.prof-meta {
+  margin: 0.8rem 0 0;
+  color: var(--faint);
+  font-size: 0.75rem;
+}
+
+.prof-meta a {
+  color: var(--accent);
+}
+
+.verdict-evidence {
+  margin: 0.2rem 0 0.4rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.verdict-routing {
+  margin: 0.4rem 0;
+  padding: 0.5rem 0.7rem;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  color: #cbd5e1;
+  font-size: 0.85rem;
+}
+
+.tasks {
+  margin: 0;
+  padding-left: 1.15rem;
+}
+
+.tasks li {
+  margin: 0.35rem 0;
+  font-size: 0.88rem;
+}
+
+/* The catalogue page (`/profiles`): the ruler, with no corpus on it. */
+.profile-intro {
+  margin: 0 0 1.5rem;
+  color: #cbd5e1;
+  font-size: 0.92rem;
+}
+
+.profile-rule {
+  padding: 0.6rem 0.75rem;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+}
+
+.profile-grid {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.profile .criteria {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.crit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.6rem;
+  align-items: baseline;
+  padding: 0.2rem 0;
+  font-size: 0.82rem;
+}
+
+.crit code {
+  font-size: 0.78rem;
+}
+
+.crit-gate code {
+  color: var(--fg);
+}
+
+.crit-favour code,
+.crit-partial code {
+  color: var(--muted);
+}
+
 /* --- the brief: a decision, not a table of readings ---------------------
  *
  * The report is evidence and reads like it. The brief is the front page of a

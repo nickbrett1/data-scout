@@ -1,38 +1,31 @@
 """The brief — what to run on this corpus, and what would change my mind.
 
-A report is evidence: this instrument said this number. A *brief* is a decision:
-given those numbers, what kind of thing is this, what should be built on top of
-it, and what is the next measurement that could overturn the answer. Both are
-needed and they are not the same document — a table of readings, however crisp,
-leaves the reader to invent the thesis, and the thesis is the only part they
-actually wanted.
+A report is evidence: this instrument said this number. A *brief* is a decision,
+and it is built in two separable halves:
 
-So this module holds the judgement in one place, as data:
+1. **facts** — a closed set of named readings, each citing the ledger lines it came
+   from. This module's :func:`read` is the only place a ledger line becomes a
+   fact, and it never guesses: a fact nobody measured is absent, not zero.
+2. **evaluation** — :mod:`data_scout.profiles` scores every profile in the
+   catalogue against those facts and returns pass / fail / **unknown** per
+   criterion. Unknown never disqualifies; it names the next measurement.
 
-* :func:`read` turns ledger lines into a :class:`Corpus` — a handful of facts,
-  each carrying the line it came from, so a brief can be *checked* rather than
-  believed. Anything it could not find stays ``None`` and is reported as an open
-  axis, never as a zero.
-* :func:`axes` answers the questions that actually separate one system from
-  another (is there a schema? is the content text? does the parser see it?), each
-  with the reading *and* what it implies.
-* :func:`verdict` picks one of five systems — relational, document intelligence,
-  vision over page images, OCR-then-documents, or a routed corpus — and says what
-  not to build, plus the two or three measurements that would change its mind.
+This module renders the result: the winner, the whole matrix (including the
+profiles the corpus disqualifies), the per-document routing table, and the plan.
+All profiles are shown because a single label hides the refusals, and the refusals
+are half the answer.
 
-The thresholds are stated, not buried: :data:`PROSE_WORDS_PER_PAGE` and
-:data:`PLATE_IMAGES_PER_PAGE` are the line between "text you can read" and
-"pictures with captions". They are heuristics with a citation, and the brief
-prints them so a reader can disagree with a number instead of a mood.
+The evidence — the numbers themselves — stays where it belongs, in the report.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
+from statistics import median
 from typing import Any, Literal
 
-from data_scout import render, workspace
+from data_scout import profiles, render, workspace
 from data_scout.ledger import Ledger
 
 Kind = Literal["prose", "plate", "sparse", "mixed", "unknown"]
@@ -45,19 +38,20 @@ PROSE_WORDS_PER_PAGE = 150.0
 PLATE_IMAGES_PER_PAGE = 5.0
 SPARSE_WORDS_PER_PAGE = 30.0
 
-#: A corpus is "tabular" when most parsed table parts carry text — that is the
-#: only shape for which a relational store beats a document store.
-TABLE_SHARE_FOR_SQL = 0.5
-
 
 @dataclass(frozen=True)
 class Fact:
-    """One number from the ledger, phrased as a reading, with its line."""
+    """One reading from the ledger, with the lines that support it.
+
+    ``observed`` is the sentence a reader sees — the number formatted for a page,
+    because "0.0" under a heading means nothing to anybody. ``value`` is what a
+    criterion tests.
+    """
 
     name: str
-    value: Any
-    reading: str
-    line: int
+    value: float
+    observed: str
+    lines: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -68,6 +62,7 @@ class DocProfile:
     pages: int | None = None
     words: int | None = None
     images_per_page: float | None = None
+    narrative_share: float | None = None
     lines: tuple[int, ...] = ()
 
     @property
@@ -75,6 +70,16 @@ class DocProfile:
         if self.words is None or not self.pages:
             return None
         return self.words / self.pages
+
+    def value(self, fact: str) -> float | None:
+        """The per-document fact a criterion asked for, or None if unmeasured."""
+        if fact == "words_per_page":
+            return self.words_per_page
+        if fact == "images_per_page":
+            return self.images_per_page
+        if fact == "narrative_share":
+            return self.narrative_share
+        return None
 
     @property
     def kind(self) -> Kind:
@@ -90,27 +95,22 @@ class DocProfile:
             return "sparse"
         return "mixed"
 
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "document": self.document,
-            "pages": self.pages,
-            "words": self.words,
-            "words_per_page": None if self.words_per_page is None else round(self.words_per_page, 1),
-            "images_per_page": self.images_per_page,
-            "kind": self.kind,
-        }
+    @property
+    def name(self) -> str:
+        return self.document.split("/")[-1]
+
+
+#: The per-document facts a profile may test. Declared, so evaluation never has to
+#: guess whether ``images_per_page`` means "the corpus" or "each document".
+PER_DOCUMENT_FACTS = frozenset({"words_per_page", "images_per_page", "narrative_share"})
 
 
 @dataclass(frozen=True)
 class Corpus:
-    """The handful of facts a decision needs, each traceable to a ledger line."""
+    """The facts a decision rests on, and the documents they were read from."""
 
     facts: tuple[Fact, ...] = ()
     documents: tuple[DocProfile, ...] = ()
-    tables_with_text: int | None = None
-    table_parts: int | None = None
-    pages_lost: int | None = None
-    pages_measured: int | None = None
 
     def fact(self, name: str) -> Fact | None:
         for fact in self.facts:
@@ -118,37 +118,11 @@ class Corpus:
                 return fact
         return None
 
+    def per_document_facts(self) -> frozenset[str]:
+        return PER_DOCUMENT_FACTS
+
     def by_kind(self, kind: Kind) -> tuple[DocProfile, ...]:
         return tuple(document for document in self.documents if document.kind == kind)
-
-    @property
-    def table_share(self) -> float | None:
-        if not self.table_parts or self.tables_with_text is None:
-            return None
-        return self.tables_with_text / self.table_parts
-
-
-@dataclass(frozen=True)
-class Axis:
-    """One decision axis: the question, the reading, and what it implies."""
-
-    name: str
-    question: str
-    reading: str
-    implies: str
-    lines: tuple[int, ...] = ()
-    open: bool = False
-
-
-@dataclass(frozen=True)
-class Verdict:
-    """One recommendation, with its costs and its refutation conditions."""
-
-    system: str
-    thesis: str
-    moves: tuple[str, ...]
-    not_to_do: tuple[str, ...]
-    falsifiers: tuple[str, ...]
 
 
 # --------------------------------------------------------------------------
@@ -172,84 +146,103 @@ def _document_of(params: dict[str, Any]) -> str | None:
     return None
 
 
+def _count(number: float) -> str:
+    """A count for a page: 1,160 pages, not 1160.0 pages."""
+    return f"{number:,.0f}"
+
+
 def read(findings: Sequence[Any]) -> Corpus:
     """Turn ledger findings into the facts a decision rests on.
 
-    Two extraction rules, deliberately narrow: a document profile comes from any
-    line naming a document and its page count, and a corpus fact comes from a
-    line whose unit says what it is a number of. Everything else is ignored here
-    — the brief is not a second report, and a fact it invents is a fact nobody
-    can check.
+    Every fact here has one documented source pattern, and a fact whose source is
+    not in the ledger is simply absent. That is the whole design: the brief may not
+    invent a reading, and a missing reading is what makes a profile *unknown*
+    rather than disqualified.
     """
-    facts: list[Fact] = []
-    profiles: dict[str, DocProfile] = {}
-    tables_with_text: int | None = None
+    facts: dict[str, Fact] = {}
+    profiles_by_document: dict[str, DocProfile] = {}
     table_parts: int | None = None
+    tables_with_text: int | None = None
     pages_lost: int | None = None
     pages_measured: int | None = None
+    table_line: int | None = None
+    loss_line: int | None = None
+
+    def put(fact: Fact) -> None:
+        # The ledger is append-only, so a re-run repeats a fact. The newest line
+        # wins; older copies would make the brief look like it had two answers.
+        facts[fact.name] = fact
 
     for line_number, finding in enumerate(findings, start=1):
         params = dict(getattr(finding, "params", None) or {})
         unit = str(getattr(finding, "unit", "") or "")
         value = getattr(finding, "value", None)
         count = getattr(finding, "n", None)
+        tool = str(getattr(finding, "tool", "") or "")
 
-        # The dataset frame: how many files, how many bytes, what it is called.
-        if getattr(finding, "tool", "") == "frame" and params.get("identity_files"):
+        # The dataset frame: how many payload files, and how many bytes.
+        if tool == "frame" and params.get("identity_files"):
             files = int(params["identity_files"])
             size = _number(value)
             if size is not None:
-                facts.append(
+                put(
                     Fact(
-                        name="bytes",
-                        value=size,
-                        reading=f"{size / 1e6:.0f} MB across {files} files",
-                        line=line_number,
+                        "documents",
+                        float(files),
+                        f"{files} documents",
+                        (line_number,),
+                    )
+                )
+                put(
+                    Fact(
+                        "bytes",
+                        size,
+                        f"{size / 1e6:.0f} MB across {files} documents",
+                        (line_number,),
                     )
                 )
 
         # Per-document shape: any line naming a document with a page count.
         document = _document_of(params)
-        pages = _number(params.get("pages"))
-        if document and pages:
-            profile = profiles.get(document, DocProfile(document=document))
-            update: dict[str, Any] = {"pages": int(pages), "lines": (*profile.lines, line_number)}
+        page_count = _number(params.get("pages"))
+        if document and page_count:
+            profile = profiles_by_document.get(document, DocProfile(document=document))
+            update: dict[str, Any] = {
+                "pages": int(page_count),
+                "lines": (*profile.lines, line_number),
+            }
             words = _number(params.get("docling_words") or params.get("words"))
             if words is not None:
                 update["words"] = int(words)
-            if "images per page" in unit:
-                images = _number(value)
-                if images is not None:
-                    update["images_per_page"] = round(images, 2)
-                    facts.append(
-                        Fact(
-                            name=f"images_per_page:{document}",
-                            value=images,
-                            reading=f"{document}: {images:.1f} images a page",
-                            line=line_number,
-                        )
-                    )
-            elif words is not None and pages:
-                per_page = words / pages
-                facts.append(
-                    Fact(
-                        name=f"words_per_page:{document}",
-                        value=per_page,
-                        reading=f"{document}: {per_page:.0f} words a page over {int(pages)} pages",
-                        line=line_number,
-                    )
-                )
-            profiles[document] = replace(profile, **update)
+            images = _number(value) if "images per page" in unit else None
+            if images is not None:
+                update["images_per_page"] = round(images, 2)
+            share = _number(value) if tool == "structure_mix" else None
+            if share is not None:
+                update["narrative_share"] = share
+            changed = any(
+                getattr(profile, field) != value
+                for field, value in update.items()
+                if field != "lines"
+            )
+            if not changed:
+                # An append-only ledger repeats a measurement when a tool is re-run.
+                # The newest line is the citation; older identical lines are not
+                # a second answer, and a document measured once must not be cited twice.
+                update["lines"] = (line_number,)
+            profiles_by_document[document] = DocProfile(**{**profile.__dict__, **update})
 
         # Table parts: the only evidence that a relational store could pay.
         if "table parts" in unit:
+            table_line = line_number
             if isinstance(count, int | float):
                 table_parts = int(count)
-            if isinstance(getattr(finding, "value", None), int | float):
-                tables_with_text = int(finding.value)
+            if isinstance(value, int | float):
+                tables_with_text = int(value)
 
         # Parser loss: pages where the layout parser returned nothing.
         if unit.startswith("pages (of"):
+            loss_line = line_number
             lost = _number(value)
             measured = _number(count)
             if lost is not None:
@@ -257,261 +250,145 @@ def read(findings: Sequence[Any]) -> Corpus:
             if measured is not None:
                 pages_measured = int(measured)
 
-    # The ledger is append-only, so a re-run repeats a fact. The newest line is
-    # the one to cite; older copies would make the brief look like it had two
-    # answers where it has one.
-    newest: dict[str, Fact] = {}
-    for fact in facts:
-        newest[fact.name] = fact
+        # Text layer: pdf_forensics counts documents *without* one. Lines that
+        # carry an `attribute` (fonts, encryption) or a `probe` (extraction test)
+        # are different questions about the same unit and are excluded here.
+        if (
+            tool == "pdf_forensics"
+            and unit.startswith("documents (PDF")
+            and "attribute" not in params
+            and "probe" not in params
+        ):
+            missing = _number(value)
+            total = _number(count)
+            if missing is not None and total:
+                have = total - missing
+                put(
+                    Fact(
+                        "text_layer_share",
+                        have / total,
+                        f"{_count(have)} of {_count(total)} PDFs carry a text layer",
+                        (line_number,),
+                    )
+                )
 
-    corpus = Corpus(
-        facts=tuple(newest.values()),
-        documents=tuple(profiles.values()),
-        tables_with_text=tables_with_text,
-        table_parts=table_parts,
-        pages_lost=pages_lost,
-        pages_measured=pages_measured,
-    )
-    return corpus
+        # Near-duplicate share: the answer to "is this eight books or three?".
+        if tool == "near_dup_docs":
+            share = _number(value)
+            if share is not None:
+                put(
+                    Fact(
+                        "dup_share",
+                        share,
+                        f"{share:.0%} of documents are near duplicates",
+                        (line_number,),
+                    )
+                )
 
+    documents = tuple(profiles_by_document.values())
 
-# --------------------------------------------------------------------------
-# the decision
-# --------------------------------------------------------------------------
+    # --- derived facts: arithmetic over the readings, never a new observation ---
+    # A derived fact cites the lines it was derived from, so every number on the
+    # page can be traced back to a reading: an arithmetic result is still an
+    # answer to "where did this come from?".
+    document_lines = tuple(sorted({line for document in documents for line in document.lines}))
 
-
-def axes(corpus: Corpus) -> tuple[Axis, ...]:
-    """The questions that separate one system from another, answered or open."""
-    prose = corpus.by_kind("prose")
-    plates = corpus.by_kind("plate")
-    sparse = corpus.by_kind("sparse")
-
-    table_share = corpus.table_share
-    if table_share is None:
-        shape = Axis(
-            name="Shape",
-            question="Is there a schema to query, or a document to read?",
-            reading="no finding measured table parts, so the question is unanswered",
-            implies="measure the structure mix before committing to any store",
-            open=True,
-        )
-    elif table_share >= TABLE_SHARE_FOR_SQL:
-        shape = Axis(
-            name="Shape",
-            question="Is there a schema to query, or a document to read?",
-            reading=f"{corpus.tables_with_text} of {corpus.table_parts} parsed table parts carry text "
-            f"({table_share:.0%})",
-            implies="a relational store is the right home: this is rows, not prose",
-        )
-    else:
-        shape = Axis(
-            name="Shape",
-            question="Is there a schema to query, or a document to read?",
-            reading=f"{corpus.tables_with_text} of {corpus.table_parts} parsed table parts carry text "
-            f"({table_share:.0%}) — the tables are furniture, not data",
-            implies="do not build a warehouse or a chart pipeline; there is nothing to aggregate",
-            lines=(),
+    pages = [document.pages for document in documents if document.pages]
+    if pages:
+        put(
+            Fact(
+                "pages",
+                float(sum(pages)),
+                f"{_count(sum(pages))} pages profiled",
+                document_lines,
+            )
         )
 
-    if prose or plates:
-        parts = []
-        if prose:
-            parts.append(f"{len(prose)} prose")
-        if plates:
-            parts.append(f"{len(plates)} image-plate")
-        if sparse:
-            parts.append(f"{len(sparse)} sparse-text")
-        unmeasured = len(corpus.documents) - len(prose) - len(plates) - len(sparse) - len(
-            corpus.by_kind("mixed")
-        )
-        if unmeasured:
-            parts.append(f"{unmeasured} not yet readable as either")
-        modality = Axis(
-            name="Modality",
-            question="Is the content words, pictures, or both?",
-            reading=", ".join(parts) + f" — of {len(corpus.documents)} profiled documents",
-            implies=(
-                "one system cannot serve both: route each document to the pipeline its numbers name"
-                if prose and plates
-                else "one pipeline is enough"
-            ),
-            lines=tuple(sorted({line for document in corpus.documents for line in document.lines})),
-        )
-    else:
-        modality = Axis(
-            name="Modality",
-            question="Is the content words, pictures, or both?",
-            reading="no document carries both a page count and a word or image count",
-            implies="nothing can be routed yet: measure a page and a word count per document",
-            open=True,
+    words = [document.words for document in documents if document.words]
+    if words:
+        put(
+            Fact(
+                "corpus_words",
+                float(sum(words)),
+                f"{_count(sum(words))} words",
+                document_lines,
+            )
         )
 
-    lost = corpus.pages_lost
-    measured = corpus.pages_measured
-    if lost is not None and measured:
-        fidelity = Axis(
-            name="Parser fidelity",
-            question="Does the layout parser see everything a reader would?",
-            reading=f"{lost} of {measured} pages came back empty from the parser while a raw text "
-            f"extractor had text ({lost / measured:.1%})",
-            implies="the pipeline needs a whole-page fallback, or it silently drops pages",
-        )
-    else:
-        fidelity = Axis(
-            name="Parser fidelity",
-            question="Does the layout parser see everything a reader would?",
-            reading="no page-level parser loss was measured",
-            implies="measure it on the documents you intend to parse before trusting the parse",
-            open=True,
+    per_page = [document.words_per_page for document in documents if document.words_per_page]
+    if per_page:
+        lines = tuple(sorted({line for document in documents for line in document.lines}))
+        put(
+            Fact(
+                "words_per_page_median",
+                float(median(per_page)),
+                f"median {median(per_page):.0f} words a page",
+                lines,
+            )
         )
 
-    return (shape, modality, fidelity)
-
-
-def verdict(corpus: Corpus) -> Verdict:
-    """One recommendation from the facts, or the single measurement to take first."""
-    prose = corpus.by_kind("prose")
-    plates = corpus.by_kind("plate")
-    share = corpus.table_share
-
-    if share is not None and share >= TABLE_SHARE_FOR_SQL:
-        return Verdict(
-            system="Relational store (SQL) with a thin BI layer",
-            thesis=(
-                f"Most parsed table parts carry text ({share:.0%}): this corpus is rows. "
-                "Load it into a table per document family, keep the prose as a notes column, "
-                "and let the questions be SQL."
-            ),
-            moves=(
-                "Score the tables for header regularity before designing a schema — a table with "
-                "merged cells is a paragraph drawn with lines.",
-                "Load one document family end to end and try three real questions against it.",
-                "Keep the raw part text beside every row so a wrong parse is visible, not hidden.",
-            ),
-            not_to_do=(
-                "Do not start with a document embedding pipeline: retrieval over prose answers "
-                "different questions than the ones a row-shaped corpus invites.",
-            ),
-            falsifiers=(
-                "If the table headers turn out to be irregular across documents, the schema is a "
-                "document store with a table extractor, not a warehouse.",
-                "If one family dominates and the others are noise, load only that family.",
-            ),
+    picture_counts = [
+        document.images_per_page for document in documents if document.images_per_page is not None
+    ]
+    if picture_counts:
+        densest = max(documents, key=lambda document: document.images_per_page or 0)
+        put(
+            Fact(
+                "images_per_page_max",
+                float(max(picture_counts)),
+                f"up to {max(picture_counts):.1f} images a page ({densest.name})",
+                densest.lines,
+            )
         )
 
-    if plates and not prose:
-        return Verdict(
-            system="Vision over page images (describe, then embed)",
-            thesis=(
-                f"The profiled documents are picture books — up to "
-                f"{max((d.images_per_page or 0) for d in plates):.0f} images a page — so the text "
-                "layer is a caption, not content. Render pages to images and let a vision model "
-                "say what is on them; retrieve over those descriptions."
-            ),
-            moves=(
-                "Render a 20-page sample at 200 DPI and caption it; read the captions yourself "
-                "before paying for the rest.",
-                "Decide the unit: page, spread, or single image. A spread is often the artwork.",
-                "Embed the captions, not the pixels, for retrieval — captions are searchable text "
-                "and pixels are not.",
-            ),
-            not_to_do=(
-                "Do not build a text pipeline on the extractable text layer: it is captions and "
-                "page furniture, and summarising it describes the book's layout.",
-            ),
-            falsifiers=(
-                "If captions already carry the meaning, a cheap text pipeline over them wins — "
-                "check that before rendering a thousand pages.",
-                "If the plates are decorative (repeated motifs, no per-page meaning), the corpus is "
-                "smaller than it looks.",
-            ),
+    if documents:
+        plates = [document for document in documents if document.kind == "plate"]
+        put(
+            Fact(
+                "plate_share",
+                len(plates) / len(documents),
+                f"{len(plates)} of {len(documents)} profiled documents are plate books",
+                tuple(sorted({line for document in documents for line in document.lines})),
+            )
         )
 
-    if prose and plates:
-        plate_word = "document" if len(plates) == 1 else "documents"
-        unknown = len(corpus.documents) - len(prose) - len(plates) - len(
-            corpus.by_kind("sparse")
-        ) - len(corpus.by_kind("mixed"))
-        unmeasured = (
-            f" {unknown} more {'is' if unknown == 1 else 'are'} profiled but has no word count yet, "
-            "so it is not yet routed."
-            if unknown
-            else ""
-        )
-        return Verdict(
-            system="Document intelligence, routed per document",
-            thesis=(
-                f"This is two corpora in one directory. {len(prose)} of "
-                f"{len(corpus.documents)} profiled documents read as prose (at least "
-                f"{PROSE_WORDS_PER_PAGE:.0f} words a page): parse, chunk, embed, then retrieve and "
-                f"summarise. {len(plates)} {plate_word} "
-                f"{'is an image-plate book' if len(plates) == 1 else 'are image-plate books'} where "
-                "a page's words are a caption, and a text pipeline will confidently describe "
-                f"nothing.{unmeasured} Route on the numbers, not on the file extension."
-            ),
-            moves=(
-                "Profile every document with words and images per page — the routing decision is "
-                "that table and nothing else.",
-                "For the prose books: parse with the layout parser, chunk by section, embed, then "
-                "ask the three questions you actually have (themes, quotes, what a chapter says).",
-                "For the plate books: render a 20-page sample and caption it; a browser view of the "
-                "pages is a legitimate first deliverable and costs nothing.",
-            ),
-            not_to_do=(
-                "Do not run one pipeline over the whole directory and average the result: the "
-                "average of a novel and an artbook describes neither.",
-                "Do not build a warehouse. Nothing here is rows.",
-                "Do not trust a parse that returns an empty page: add a whole-page text fallback "
-                "where the parser and a raw extractor disagree.",
-            ),
-            falsifiers=(
-                "If most 'prose' documents turn out to be scanned images, the text pipeline becomes "
-                "an OCR job — measure the text layer before parsing.",
-                "If the plate books are the ones you care about, this is a vision project with a "
-                "text appendix, and the order of work flips.",
-                "If a document's text is unreachable (drm, permissions), it is a specimen for "
-                "inspection only until that is solved.",
-            ),
+    shares = [
+        document.narrative_share
+        for document in documents
+        if document.narrative_share is not None
+    ]
+    if shares:
+        put(
+            Fact(
+                "narrative_share_median",
+                float(median(shares)),
+                f"median narrative share {median(shares):.2f}",
+                document_lines,
+            )
         )
 
-    if prose:
-        return Verdict(
-            system="Document intelligence (parse, chunk, embed, retrieve)",
-            thesis=(
-                f"Every profiled document reads as prose (at least {PROSE_WORDS_PER_PAGE:.0f} words a "
-                "page), so the work is reading: parse with structure, chunk by section, embed, then "
-                "retrieve, summarise and mine quotes and themes."
-            ),
-            moves=(
-                "Parse one document end to end and check the section structure by eye.",
-                "Chunk by section and embed; ask three real questions and grade the answers.",
-                "Mine quotes and themes with citations back to a page, or the output is not checkable.",
-            ),
-            not_to_do=("Do not build a warehouse, and do not caption pages you can already read.",),
-            falsifiers=(
-                "If the chunked retrieval cannot answer a question the document plainly answers, "
-                "the parse is wrong, not the model.",
-                "If the corpus is only a few hundred pages, an agent reading it whole beats a "
-                "vector index — measure the size before building one.",
-            ),
+    if table_parts and tables_with_text is not None:
+        put(
+            Fact(
+                "table_share",
+                tables_with_text / table_parts,
+                f"{tables_with_text} of {table_parts} parsed table parts carry text",
+                () if table_line is None else (table_line,),
+            )
         )
 
-    return Verdict(
-        system="Undecided — measure before building",
-        thesis=(
-            "The ledger does not yet contain the facts that separate one system from another: how "
-            "many documents there are, how many words and images a page, whether any table carries "
-            "text. Anything chosen now is a guess wearing a recommendation's clothes."
-        ),
-        moves=(
-            "Profile each document: pages, words, images. Two numbers a document decide more than "
-            "any model choice.",
-            "Measure the structure mix on one document: how much of it is prose, how much is a picture.",
-            "Only then pick a pipeline — the brief will pick one for you.",
-        ),
-        not_to_do=("Do not start with the model. Start with the page.",),
-        falsifiers=("Any of the three measurements above changes the recommendation.",),
-    )
+    if pages_lost is not None and pages_measured:
+        put(
+            Fact(
+                "parser_loss_share",
+                pages_lost / pages_measured,
+                f"{pages_lost} of {_count(pages_measured)} pages came back empty from the parser "
+                f"({pages_lost / pages_measured:.1%})",
+                () if loss_line is None else (loss_line,),
+            )
+        )
+
+    return Corpus(facts=tuple(facts.values()), documents=documents)
 
 
 # --------------------------------------------------------------------------
@@ -523,8 +400,7 @@ def _escape(text: str) -> str:
     return render._escape(text)
 
 
-def _lines_html(lines: Iterable[int]) -> str:
-    """The ledger lines a reading came from, as a quiet citation."""
+def _cite(lines: Iterable[int]) -> str:
     numbers = tuple(lines)
     if not numbers:
         return ""
@@ -546,10 +422,9 @@ def _documents_html(corpus: Corpus) -> str:
         "</tr></thead><tbody>"
     ]
     for document in corpus.documents:
-        name = document.document.split("/")[-1]
         rows.append(
             "<tr>"
-            f'<td class="brief-doc">{_escape(name)}</td>'
+            f'<td class="brief-doc">{_escape(document.name)}</td>'
             f"<td>{_fmt(None if document.pages is None else float(document.pages), '{:.0f}')}</td>"
             f"<td>{_fmt(document.words_per_page, '{:.0f}')}</td>"
             f"<td>{_fmt(document.images_per_page, '{:.1f}')}</td>"
@@ -560,27 +435,166 @@ def _documents_html(corpus: Corpus) -> str:
     return "".join(rows)
 
 
-def body(corpus: Corpus) -> str:
-    """The brief's HTML body: verdict, axes, documents, plan, refutations."""
-    said = verdict(corpus)
-    parts = [
-        '<section class="brief-verdict">',
-        '<p class="brief-label">What to run on this corpus</p>',
-        f'<h1>{_escape(said.system)}</h1>',
-        f"<p>{_escape(said.thesis)}</p>",
-        "</section>",
-        '<section class="brief-axes"><h2>What the numbers force</h2>',
-    ]
-    for axis in axes(corpus):
-        state = "open" if axis.open else "settled"
-        parts.append(
-            f'<div class="brief-axis a-{state}">'
-            f'<p class="brief-question">{_escape(axis.question)}</p>'
-            f'<p class="brief-reading">{_escape(axis.reading)} '
-            f"{_lines_html(axis.lines)}</p>"
-            f'<p class="brief-implies">{_escape(axis.implies)}</p>'
-            "</div>"
+_MARKS = {"pass": "\u2713", "fail": "\u2717", "unknown": "?"}
+
+
+def _cell_html(cell: profiles.Cell) -> str:
+    observed = cell.observed or "not measured"
+    detail = ""
+    if cell.state == "unknown" and cell.tool:
+        detail = f'<span class="cell-task">run <code>{_escape(cell.tool)}</code></span>'
+    elif cell.documents:
+        detail = f'<span class="cell-task">{_escape(", ".join(cell.documents))}</span>'
+    return (
+        f'<li class="cell c-{cell.state}">'
+        f'<span class="mark">{_MARKS[cell.state]}</span>'
+        f'<code class="cell-test">{_escape(cell.criterion.describe())}</code>'
+        f'<span class="cell-observed">{_escape(observed)}</span>'
+        f"{_cite(cell.lines)}{detail}"
+        "</li>"
+    )
+
+
+def _assessment_html(assessment: profiles.Assessment) -> str:
+    profile = assessment.profile
+    # A profile the corpus fits is the news and opens; a disqualified one is one
+    # line of information and stays shut.
+    opened = " open" if assessment.outcome in ("fits", "partial") else ""
+    favour_cells = "".join(_cell_html(cell) for cell in assessment.favours)
+    favours = (
+        f'<p class="profile-label">Favours — {assessment.measured_favours} of '
+        f"{len(assessment.favours)} measured</p>"
+        f'<ul class="cells">{favour_cells}</ul>'
+        if assessment.favours
+        else ""
+    )
+    score = (
+        f' · score {assessment.score:.2f}'
+        if assessment.score is not None and assessment.outcome == "fits"
+        else ""
+    )
+    return (
+        f'<details class="prof o-{assessment.outcome}" id="p-{_escape(profile.id)}"{opened}>'
+        f'<summary><span class="prof-top"><span class="prof-title">{_escape(profile.title)}</span>'
+        f'<span class="badge b-{assessment.outcome}">{_escape(assessment.headline)}</span>'
+        '<span class="f-caret"></span></span></summary>'
+        f'<div class="prof-body"><p class="prof-summary">{_escape(profile.summary)}</p>'
+        f'<ul class="cells">{"".join(_cell_html(cell) for cell in assessment.gates)}</ul>'
+        f"{favours}"
+        f'<p class="prof-meta">{score.lstrip(" ·")}'
+        f'<a href="/profiles#profile-{_escape(profile.id)}">definition</a> · '
+        f'catalog v{assessment.catalog_version}</p>'
+        "</div></details>"
+    )
+
+
+def _verdict_html(corpus: Corpus, assessments: Sequence[profiles.Assessment]) -> str:
+    winner = profiles.recommendation(assessments)
+    if winner is None:
+        blocked = [
+            cell
+            for assessment in assessments
+            if assessment.outcome == "unknown"
+            for cell in assessment.unknown
+        ]
+        detail = (
+            "Nothing measured disqualifies a profile outright; what is missing is "
+            + ", ".join(sorted({f"<code>{_escape(cell.criterion.fact)}</code>" for cell in blocked}))
+            if blocked
+            else "Every profile in the catalogue is disqualified by a measured fact."
         )
+        return (
+            '<section class="brief-verdict"><p class="brief-label">What to run on this corpus</p>'
+            "<h1>Undecided — measure before building</h1>"
+            f'<p>{detail}</p></section>'
+        )
+
+    facts_by_name = {fact.name: fact for fact in corpus.facts}
+    gate_readings = " ".join(
+        f"{_escape(facts_by_name[cell.criterion.fact].observed)}."
+        for cell in winner.gates
+        if cell.criterion.fact in facts_by_name
+    )
+    routing = _routing_note(corpus, winner)
+    return (
+        '<section class="brief-verdict"><p class="brief-label">What to run on this corpus</p>'
+        f"<h1>{_escape(winner.profile.title)}</h1>"
+        f"<p>{_escape(winner.profile.summary)}</p>"
+        f'<p class="verdict-evidence">{gate_readings}</p>'
+        f"{routing}"
+        f'<p class="profile-meta">fits {winner.passed} of {winner.profile.gate_total()} gates · '
+        f"catalog v{winner.catalog_version}</p></section>"
+    )
+
+
+def _routing_note(corpus: Corpus, winner: profiles.Assessment) -> str:
+    """What to do with the documents the winner does not cover."""
+    outside = tuple(
+        document
+        for document in corpus.documents
+        if document.kind == "unknown" or document.kind == "plate"
+    )
+    if not outside or winner.profile.id == "visual-search":
+        return ""
+    plates = tuple(document for document in outside if document.kind == "plate")
+    unknown = tuple(document for document in outside if document.kind == "unknown")
+    pieces = []
+    if plates:
+        names = ", ".join(_escape(document.name) for document in plates)
+        pieces.append(
+            f"{len(plates)} of {len(corpus.documents)} documents "
+            f"{'is an image-plate book' if len(plates) == 1 else 'are image-plate books'} "
+            f"({names}): route {'it' if len(plates) == 1 else 'them'} to a vision pass, "
+            "because a text pipeline will describe the layout instead of the content."
+        )
+    if unknown:
+        pieces.append(
+            f"{len(unknown)} document{'s' if len(unknown) > 1 else ''} "
+            f"{'has' if len(unknown) == 1 else 'have'} no word count yet, so "
+            f"{'it is' if len(unknown) == 1 else 'they are'} not yet routed."
+        )
+    return f'<p class="verdict-routing">{_escape(" ".join(pieces))}</p>'
+
+
+def _next_measurements(assessments: Sequence[profiles.Assessment]) -> str:
+    """Gate criteria nobody has measured, as an agenda with a tool on each."""
+    wanted: dict[str, str | None] = {}
+    for assessment in assessments:
+        if assessment.outcome == "disqualified":
+            continue
+        for cell in assessment.unknown:
+            wanted.setdefault(cell.criterion.fact, cell.tool)
+    if not wanted:
+        return ""
+    items = "".join(
+        f'<li><code>{_escape(fact)}</code>'
+        + (f' <span class="brief-cite">{_escape(tool)}</span>' if tool else "")
+        + "</li>"
+        for fact, tool in sorted(wanted.items())
+    )
+    return (
+        '<section class="brief-open"><h2>What is still unmeasured</h2>'
+        '<p class="brief-note">These are gate criteria on profiles the corpus has not been '
+        "disqualified from. An unknown never rules a profile out — it is the next session's "
+        "question, and it comes with the instrument that answers it.</p>"
+        f'<ul class="tasks">{items}</ul></section>'
+    )
+
+
+def body(corpus: Corpus, assessments: Sequence[profiles.Assessment] | None = None) -> str:
+    """The brief: verdict, the whole matrix, the documents, the plan."""
+    scored = tuple(assessments) if assessments is not None else profiles.evaluate(corpus)
+    winner = profiles.recommendation(scored)
+    parts = [_verdict_html(corpus, scored)]
+
+    parts.append('<section class="matrix"><h2>Every profile, scored</h2>')
+    parts.append(
+        '<p class="brief-note">All of them, including the ones this corpus rules out: '
+        '<a href="/profiles">what each profile is</a>. '
+        "<strong>✓</strong> measured and true · <strong>✗</strong> measured and false · "
+        "<strong>?</strong> nobody measured it, which never disqualifies.</p>"
+    )
+    parts.extend(_assessment_html(assessment) for assessment in scored)
     parts.append("</section>")
 
     documents = _documents_html(corpus)
@@ -593,31 +607,40 @@ def body(corpus: Corpus) -> str:
             f"{documents}</section>"
         )
 
-    parts.append('<section class="brief-do"><h2>First moves</h2><ol>')
-    parts.extend(f"<li>{_escape(move)}</li>" for move in said.moves)
-    parts.append("</ol></section>")
+    parts.append(_next_measurements(scored))
 
-    parts.append('<section class="brief-not"><h2>Do not</h2><ul>')
-    parts.extend(f"<li>{_escape(item)}</li>" for item in said.not_to_do)
-    parts.append("</ul></section>")
+    if winner is not None:
+        parts.append('<section class="brief-do"><h2>First moves</h2><ol>')
+        parts.extend(f"<li>{_escape(move)}</li>" for move in winner.profile.moves)
+        parts.append("</ol></section>")
 
-    parts.append('<section class="brief-open"><h2>What would change this</h2><ul>')
-    parts.extend(f"<li>{_escape(item)}</li>" for item in said.falsifiers)
-    parts.append("</ul></section>")
+        parts.append('<section class="brief-not"><h2>Do not</h2><ul>')
+        parts.extend(f"<li>{_escape(item)}</li>" for item in winner.profile.not_to_do)
+        parts.append("</ul></section>")
+
+        parts.append('<section class="brief-open"><h2>What would change this</h2><ul>')
+        parts.extend(f"<li>{_escape(item)}</li>" for item in winner.profile.falsifiers)
+        parts.append("</ul></section>")
 
     parts.append(
         '<section class="report-notes"><h2>Where this comes from</h2>'
-        "<p>Every reading above is a line in <code>findings.jsonl</code>; the citations name the "
-        "line. Nothing here is a measurement of its own — the evidence is the report.</p></section>"
+        "<p>Every reading above is a line in <code>findings.jsonl</code>, and the citations name "
+        "the line; the profiles are the catalogue at <a href=\"/profiles\">/profiles</a>. Nothing "
+        "here is a measurement of its own — the evidence is the report.</p></section>"
     )
     return "".join(parts)
 
 
-def render_brief(corpus: Corpus, *, dataset_id: str | None = None) -> str:
+def render_brief(
+    corpus: Corpus,
+    *,
+    dataset_id: str | None = None,
+    assessments: Sequence[profiles.Assessment] | None = None,
+) -> str:
     """The whole brief, as one styled document."""
     title = f"brief — {dataset_id}" if dataset_id else "brief"
-    meta = f"{dataset_id} · what to run on it" if dataset_id else "what to run on a corpus"
-    return render.html_document(body(corpus), title=title, meta=meta)
+    meta = f"{dataset_id} · what to run on it · catalog v{profiles.CATALOGUE_VERSION}"
+    return render.html_document(body(corpus, assessments), title=title, meta=meta)
 
 
 def write_brief(dataset_id: str, ledger: Ledger) -> Any:
@@ -628,13 +651,74 @@ def write_brief(dataset_id: str, ledger: Ledger) -> Any:
     return target
 
 
+def index_record(dataset_id: str) -> dict[str, Any] | None:
+    """The machine-readable half of the index's call to action.
+
+    The same claim the button makes, for a script: which profile leads, how it
+    scored, and what every other profile came out as, so "what did the catalogue
+    say about this dataset" needs no HTML parsing.
+    """
+    path = workspace.ledger_path(dataset_id)
+    if not path.is_file():
+        return None
+    try:
+        corpus = read(Ledger(path).findings())
+    except (OSError, ValueError):
+        # The index is the page a reader uses when something is wrong, so a
+        # ledger it cannot parse must degrade to "no brief", never to a 500.
+        return None
+    assessments = profiles.evaluate(corpus)
+    winner = profiles.recommendation(assessments)
+    return {
+        "catalog_version": profiles.CATALOGUE_VERSION,
+        "primary_profile": winner.profile.id if winner else None,
+        "title": winner.profile.title if winner else None,
+        "headline": winner.headline if winner else "undecided",
+        "gates_passed": winner.passed if winner else 0,
+        "gates_total": winner.profile.gate_total() if winner else 0,
+        "outcomes": {assessment.profile.id: assessment.outcome for assessment in assessments},
+        "unmeasured": sorted(
+            {
+                cell.criterion.fact
+                for assessment in assessments
+                if assessment.outcome != "disqualified"
+                for cell in assessment.unknown
+            }
+        ),
+    }
+
+
+def headline(dataset_id: str) -> str | None:
+    """``literature mining (fits 3/3)`` for the index's call to action, or None.
+
+    The index should not say "what to run on this dataset" and then make you tap to
+    find out; a decision is one line, and that line fits on a button.
+    """
+    path = workspace.ledger_path(dataset_id)
+    try:
+        corpus = read(Ledger(path).findings())
+    except (OSError, ValueError):
+        return None
+    winner = profiles.recommendation(profiles.evaluate(corpus))
+    if winner is None:
+        return None
+    short = winner.profile.title.split(" — ")[0]
+    return f"{short} ({winner.headline})"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    """``brief-render <dataset-id>`` — the decision, from the ledger as it stands."""
+    """``brief-render <dataset-id> [--for <profile>]`` — the decision, from the ledger."""
     import argparse
     import sys
 
     parser = argparse.ArgumentParser(prog="brief-render", description="What to run on a dataset.")
     parser.add_argument("dataset", nargs="?", help="dataset id; defaults to DATA_SCOUT_DATASET_ID")
+    parser.add_argument(
+        "--for",
+        dest="profile",
+        metavar="PROFILE",
+        help="score one profile and report only that, by id (e.g. corpus-qa)",
+    )
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
 
@@ -643,9 +727,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not ledger_path.is_file():
         print(f"brief-render: no ledger at {ledger_path}", file=sys.stderr)
         return 2
+
+    corpus = read(Ledger(ledger_path).findings())
+    if args.profile:
+        chosen = [profile for profile in profiles.CATALOGUE if profile.id == args.profile]
+        if not chosen:
+            known = ", ".join(profile.id for profile in profiles.CATALOGUE)
+            print(f"brief-render: no profile {args.profile!r}; known: {known}", file=sys.stderr)
+            return 2
+        assessment = profiles.evaluate(corpus, chosen)[0]
+        if not args.quiet:
+            print(f"{assessment.profile.id}: {assessment.headline}")
+            for cell in (*assessment.gates, *assessment.favours):
+                mark = {"pass": "ok  ", "fail": "FAIL", "unknown": "?   "}[cell.state]
+                print(f"  {mark} {cell.criterion.describe():28} {cell.observed or 'not measured'}")
+        return 0
+
     written = write_brief(dataset_id, Ledger(ledger_path))
     if not args.quiet:
-        corpus = read(Ledger(ledger_path).findings())
-        print(f"brief-render: {verdict(corpus).system}")
+        winner = profiles.recommendation(profiles.evaluate(corpus))
+        print(f"brief-render: {winner.profile.title if winner else 'undecided'}")
         print(f"brief-render: wrote {written}")
     return 0

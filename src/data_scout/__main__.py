@@ -55,9 +55,11 @@ from starlette.routing import Route
 
 from data_scout import (
     __version__,
+    brief,
     build,
     docling_service,
     inventory,
+    profiles,
     registry,
     render,
     workspace,
@@ -127,6 +129,7 @@ def index_payload() -> dict[str, Any]:
                 "artifacts": [f"/report/{directory.name}/{name}" for name in files],
                 "names": files,
                 "findings_lines": _count_lines(directory / workspace.LEDGER_FILENAME),
+                "brief": brief.index_record(directory.name),
                 "workspace": True,
             }
         )
@@ -292,9 +295,13 @@ def _dataset_html(dataset: dict[str, Any]) -> list[str]:
     rest = [pair for pair in pairs if not pair[0].startswith("brief-")]
     if briefs:
         _label, href = briefs[0]
+        # The decision is one line and it fits on the button: making a reader tap
+        # to learn whether anything was decided is the defect the brief exists to fix.
+        headline = brief.headline(dataset_id) or "not decided yet"
         parts.append(
             f'<p class="brief-link"><a href="{_escape(href)}">'
-            "What to run on this dataset &rarr;</a></p>"
+            f"<span>What to run on this dataset</span>"
+            f'<span class="brief-headline">{_escape(headline)}</span></a></p>'
         )
     if rest:
         parts.append("<ul>")
@@ -356,6 +363,18 @@ def livez(request: Request) -> Response:
     return _json({"status": "ok", "version": __version__, "build": build.build_id()})
 
 
+def profiles_page(request: Request) -> Response:
+    """The catalogue itself: what each profile is, and who answers each criterion.
+
+    Served next to the reports so a reader who has just seen "disqualified" can
+    check what was disqualified against, on the same phone, without a checkout.
+    """
+    del request
+    return HTMLResponse(
+        render.with_chrome(profiles.render_catalogue()), headers={"Cache-Control": "no-store"}
+    )
+
+
 def index_json(request: Request) -> Response:
     del request
     return _json(index_payload())
@@ -408,6 +427,8 @@ def build_app(docling: dict[str, Any] | None = None) -> Starlette:
         [
             Route("/healthz", healthz),
             Route("/livez", livez),
+            Route("/profiles", profiles_page),
+            Route("/report/profiles.html", profiles_page),
             Route("/report/index.json", index_json),
             Route("/index.json", index_json),
             Route("/", index_page),

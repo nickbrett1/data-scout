@@ -172,26 +172,53 @@ front page of a dataset:
 
 ```bash
 docker compose exec data-scout brief-render <dataset-id>
+docker compose exec data-scout brief-render <dataset-id> --for visual-search
 ```
 
 `brief-render` writes `brief-<dataset-id>.html` at the dataset root, where the
-index serves it and links it above the artifacts. It reads the ledger and nothing
-else, and it makes one of five calls from named facts:
+index serves it and links it above the artifacts, with the decision in the link
+label. It reads the ledger and nothing else, and it is split in two on purpose:
 
-| what the numbers say | what to run |
-|---|---|
-| most parsed table parts carry text | a relational store, with BI on top |
-| documents are word-dense | document intelligence: parse, chunk, embed, retrieve |
-| documents are picture-dense | vision over page images: describe, then embed |
-| records exist but no text layer | OCR first, then document intelligence |
-| both populations present | the same two pipelines, routed per document |
+| layer | where | what it may say |
+|---|---|---|
+| findings | `findings.jsonl` | what an instrument answered — no judgement |
+| facts | `brief.py` | a closed, named set of readings, each citing ledger lines |
+| evaluation | `profiles.py` | facts × a versioned catalogue → pass / fail / unknown |
+| brief | `brief-<dataset>.html` | the matrix, the winner, and the plan |
 
-The rules are in `src/data_scout/brief.py`, and they are printed on the page: two
-numbers per document — words a page, pictures a page — decide more than any model
-choice, and `>` is a measurement with a threshold beside it, not a mood. Every
-reading cites the ledger line it came from, and an axis nobody measured is shown
-as **open** with the measurement that would settle it. The brief also states what
-it would take to overturn it, so it can be argued with instead of obeyed.
+The catalogue is the interpretation layer, and it is **closed**: a profile is a
+use-case with a consumer and a set of declarative tests over named facts, so a
+verdict can be wrong, and therefore argued with. `v1` is eight profiles —
+literature mining, corpus QA, visual search, warehouse, records extraction,
+searchable archive, PII inventory, transcription — and `searchable-archive` is the
+honest floor: *index it and search it* is always available, and saying so is
+better than inventing a thesis. The catalogue itself is a page:
+
+```
+/profiles
+```
+
+Every profile, its gates, its weighted favours, and the instrument that would
+answer each line. It is the ruler, with no corpus on it.
+
+Three rules make the numbers usable:
+
+- **Tri-state.** A gate that *fails* disqualifies. A gate that is *unknown*
+  never does: it is a task, naming the tool to run. Conflating "measured and
+  wrong" with "nobody measured it" is how a brief becomes vague.
+- **Shape gates feasibility; purpose orders the work.** Words per page and
+  pictures per page say what the corpus *is*; the use-case says what you want
+  from it. A prose corpus with an artbook appendix is one winner plus a routed
+  document, not an average of the two.
+- **Everything is cited.** No pass or fail without a ledger line, thresholds are
+  printed on the page, and the catalogue version is stamped on the result.
+
+The brief shows **every** profile, not just the winner: fitting and partial ones
+open, disqualified ones collapsed to a line ("information, not a task"), unknown
+ones naming the missing measurement. It also states what would overturn it.
+
+`--for <profile>` prints just that profile's gates one per line, which is the
+quickest way to see what a single measurement would change.
 
 #### The report is the ledger
 
