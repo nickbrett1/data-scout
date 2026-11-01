@@ -293,3 +293,76 @@ def test_the_gate_says_not_comparable_instead_of_drifting_across_frame_schemas(
     assert "not comparable" in captured.err
     assert "different frame rules" in captured.err
     assert not workspace.artifact_path(DATASET_ID, "session-1.html").exists()
+
+
+# --------------------------------------------------------------------------
+# defect: the ledger must not be written before the gates pass
+# --------------------------------------------------------------------------
+
+APPEND_THEN_FAIL_CELL = """
+from data_scout.tools import findings_append
+
+findings_append({
+    "unit": "file",
+    "tool": "file_census",
+    "tool_version": "1",
+    "params": {"path": "."},
+    "value": 0.9,
+    "n": 2,
+    "promoted": False,
+    "retire_reason": "one-off: written before the failing cell",
+})
+
+raise ValueError("the render must not keep the line cell 3 wrote")
+"""
+
+
+def ledger_bytes() -> bytes:
+    path = workspace.ledger_path(DATASET_ID)
+    return path.read_bytes() if path.exists() else b""
+
+
+def test_a_failing_cell_leaves_the_ledger_byte_identical(dataset_workspace, capsys):
+    """Cell 4 appends unconditionally; a later error must not keep that line.
+
+    Before the fix the artifact execution ran against the live workspace, so
+    the append had already landed by the time the cell-error gate ran — twice
+    on ryzen, and both times it had to be rolled back from a snapshot.
+    """
+    build_session(dataset_workspace, cells=[APPEND_THEN_FAIL_CELL])
+    before = ledger_bytes()
+
+    code = render.main([DATASET_ID, "--quiet"])
+
+    assert code == 1
+    assert "cell 2" in capsys.readouterr().err
+    assert ledger_bytes() == before, "a failed render changed findings.jsonl"
+
+
+def test_a_failing_determinism_gate_leaves_the_ledger_byte_identical(dataset_workspace, capsys):
+    """The gate runs after execution, so the append must still be staged."""
+    build_session(dataset_workspace, cells=[NONDETERMINISTIC_CELL])
+    before = ledger_bytes()
+
+    code = render.main([DATASET_ID, "--quiet"])
+
+    assert code == 1
+    assert "VERIFICATION FAILED" in capsys.readouterr().err
+    assert ledger_bytes() == before, "a gate failure changed findings.jsonl"
+    assert not workspace.artifact_path(DATASET_ID, "session-1.html").exists()
+
+
+def test_a_passing_render_appends_the_staged_line_once_byte_for_byte(dataset_workspace, capsys):
+    """Promotion must be indistinguishable from the append the kernel made."""
+    from data_scout.ledger import Finding
+
+    build_session(dataset_workspace, cells=[APPEND_CELL])
+
+    assert render.main([DATASET_ID, "--quiet"]) == 0, capsys.readouterr().err
+
+    lines = workspace.ledger_path(DATASET_ID).read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1, "the staged line is committed exactly once"
+    # A line written through Ledger.append is canonical to_json; promotion must
+    # preserve those bytes rather than re-deriving them.
+    assert lines[0] == Finding.from_json(lines[0]).to_json()
+    assert json.loads(lines[0])["params"] == {"per_chars": 1000}

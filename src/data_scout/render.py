@@ -11,14 +11,19 @@ The six steps, in order (``data-scout-convention`` §4.3):
    which is exactly why its absence went unnoticed — a person does. The fix
    lives here, not only in the writer, because this is the component that runs a
    kernel and knows which one, so it covers hand-edited notebooks too.
-2. **Execute the notebook** for the artifact, saving outputs.
-3. **Re-execute into a scratch copy** of the dataset workspace and diff
-   ``findings.jsonl`` modulo ``ts``. The verification execution must never
-   target the live workspace, or every render appends its own ledger a second
-   time, silently, and the append-only ledger stops being a record of what the
-   session measured.
-4. **Gate the render on that diff.** The HTML outlives a correction, so a
-   known-bad rendition is worse than no rendition.
+2. **Execute the notebook** for the artifact, saving outputs. Its ledger
+   appends go to a **staged** copy (``DATA_SCOUT_LEDGER``), never the live
+   ``findings.jsonl``: a render writes nothing to the record until both gates
+   have passed.
+3. **Re-execute into a scratch copy** of the dataset workspace and diff the
+   staged ``findings.jsonl`` modulo ``ts``. The verification execution must
+   never target the live workspace, or every render appends its own ledger a
+   second time, silently, and the append-only ledger stops being a record of
+   what the session measured.
+4. **Gate the render on that diff, then promote the staged appends.** A failed
+   cell or a non-reproducing re-execution leaves ``findings.jsonl`` byte-identical
+   and exits non-zero; only a run that passes both gates appends its lines,
+   exactly once and byte for byte.
 5. **Render** ``report-*.md`` and ``session-N.ipynb`` to HTML: one stylesheet,
    no browser engine, no PDF (a stated non-goal).
 6. **Print each cell's output and any error**, so the agent can iterate.
@@ -349,19 +354,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         scratch_workspace(dataset_ws, destination=scratch_root / dataset_id)
 
         # Sampled BEFORE the artifact execution: the lines this render appends
-        # are the difference between here and ``live_after``. Sampling it after
-        # execution made ``added`` arithmetically always 0.
+        # are the difference between here and the staged ledger. Sampling it
+        # after execution made ``added`` arithmetically always 0.
         before = ledger.lines()
+
+        # The artifact execution appends to a *staged* copy of the ledger rather
+        # than the live file. Cell 4 of a notebook appends unconditionally, so
+        # without this a run that later fails a gate has already written a line
+        # — twice now, and both times it had to be rolled back from a snapshot.
+        # Seeding the stage with the live lines means a notebook that *reads*
+        # the ledger sees exactly the history it would see live.
+        staged_path = scratch_parent / "staged" / workspace.LEDGER_FILENAME
+        staged_path.parent.mkdir(parents=True, exist_ok=True)
+        staged_path.write_text(
+            "".join(line + "\n" for line in before), encoding="utf-8"
+        )
+        staged = Ledger(staged_path)
 
         # --- 1+2. execute for the artifact ---------------------------------
         print("report-render: executing for the artifact")
-        executed = execute_notebook(
-            notebook_path,
-            workspace_root=root,
-            dataset_id=dataset_id,
-            session=session,
-            timeout=args.timeout,
-        )
+        with scoped_env({workspace.LEDGER_OVERRIDE_ENV: str(staged_path)}):
+            executed = execute_notebook(
+                notebook_path,
+                workspace_root=root,
+                dataset_id=dataset_id,
+                session=session,
+                timeout=args.timeout,
+            )
         if not args.quiet:
             print_cell_outputs(executed)
         errors = cell_errors(executed)
@@ -385,16 +404,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             timeout=args.timeout,
         )
         verification_errors = cell_errors(verification)
-        live_after = ledger.lines()
+        staged_after = staged.lines()
         scratch_ledger = Ledger(scratch_root / dataset_id / workspace.LEDGER_FILENAME)
 
-        problems = diff_lines(live_after, scratch_ledger.lines())
+        problems = diff_lines(staged_after, scratch_ledger.lines())
         ledger_problems = ledger.verify()
         # A frame line is a ledger line, so the diff would otherwise read a v1
         # vs v2 difference as a byte delta and call it drift. It is not drift:
         # the two numbers were measured under different frame rules.
         frame_problems = frame_identity.comparability_problems(
-            live_after, scratch_ledger.lines()
+            staged_after, scratch_ledger.lines()
         )
 
         # --- 4. the gate ----------------------------------------------------
@@ -415,8 +434,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 1
 
-        added = len(live_after) - len(before)
-        print(f"report-render: verification passed ({len(live_after)} lines, {added} appended by this render)")
+        # Both gates passed: only now does anything reach the live ledger. The
+        # staged lines are appended byte for byte, so the record is exactly what
+        # the notebook would have written had it executed against the live
+        # workspace, and exactly once.
+        appended = staged_after[len(before):]
+        for line in appended:
+            ledger.append_line(line)
+        added = len(appended)
+        print(
+            f"report-render: verification passed "
+            f"({len(before) + added} lines, {added} appended by this render)"
+        )
         if args.verify_only:
             print("report-render: --verify-only, nothing rendered")
             return 0

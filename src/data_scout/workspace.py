@@ -41,6 +41,14 @@ WORKSPACE_ENV = "DATA_SCOUT_WORKSPACE"
 DATASET_ID_ENV = "DATA_SCOUT_DATASET_ID"
 SESSION_ENV = "DATA_SCOUT_SESSION"
 
+#: Redirect the ledger to a staging file for the duration of one kernel.
+#:
+#: ``report-render`` sets this for the artifact execution so a notebook's
+#: appends land somewhere that can be discarded: the live ``findings.jsonl`` is
+#: only touched after both gates pass. It is not a general-purpose knob and no
+#: other component sets it.
+LEDGER_OVERRIDE_ENV = "DATA_SCOUT_LEDGER"
+
 DEFAULT_DATASETS_ROOT = "/datasets"
 DEFAULT_WORKSPACE = "/workspace"
 
@@ -445,7 +453,16 @@ def cache_dir(dataset_id: str | None = None) -> Path:
 
 
 def ledger_path(dataset_id: str | None = None) -> Path:
-    """The append-only ledger path for a dataset."""
+    """The append-only ledger path for a dataset.
+
+    ``DATA_SCOUT_LEDGER`` overrides the location when set, so ``report-render``
+    can execute a notebook against a staged ledger and commit the appends only
+    after its gates pass. Unset — the normal case — the answer is the per-dataset
+    ``findings.jsonl``.
+    """
+    override = os.environ.get(LEDGER_OVERRIDE_ENV)
+    if override:
+        return Path(override)
     if dataset_id is None:
         dataset_id = current_dataset_id()
     return workspace_dir(dataset_id) / LEDGER_FILENAME

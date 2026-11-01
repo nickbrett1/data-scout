@@ -71,7 +71,7 @@ def derive_finding(
     tool: str | None = None,
     unit: str | None = None,
     value: Any,
-    n: int | None = None,
+    n: int,
     params: Mapping[str, Any] | None = None,
     promoted: bool = False,
     retire_reason: str | None = None,
@@ -95,12 +95,15 @@ def derive_finding(
     set exactly when ``promoted`` is true, and it is the module path the
     registry already publishes — the same string that resolves from anywhere.
 
-    **``params`` must carry what the measurement actually used**, including the
-    observation scope (``params["scope"]``: ``"."``, ``"data/"``, or the file
-    measured) and, where the measurement pinned a file set, its manifest. A
-    value without its parameters restates the number instead of answering
-    *what did I get last time*; a value without its scope does not even say
-    which part of the dataset it is about.
+    **``params`` must carry what the measurement actually used**: the scope it
+    was measured over and, where the measurement pinned a file set, its
+    manifest. Scope is **not required and has no invented default**. The
+    historical ledger expresses scope in the vocabulary each measurement
+    actually used — ``path`` (an absolute path), ``document``, ``documents``,
+    ``file``, ``pages`` — and only some instruments ever used a key literally
+    named ``scope``. A key named ``scope`` is accepted and preserved when a
+    caller supplies it, but an absent one is left absent: a default written
+    into ``params`` would change the digest of every line that predates it.
 
     ``n`` has no default: a finding is a number *of* something, and "not
     supplied" is not a count. ``0`` is a real count and passes.
@@ -113,28 +116,20 @@ def derive_finding(
     """
     spec = registry.get(tool if tool is not None else _calling_instrument_name())
 
-    if n is None:
-        raise ValueError(
-            f"derive_finding({spec.name}): `n` is required — a finding is a "
-            "number *of* something, and 'not supplied' is not a count. Pass the "
-            "population the value was measured over (0 is a legitimate count)."
-        )
     if params is None:
         raise ValueError(
             f"derive_finding({spec.name}): `params` is required — a value "
             "without its parameters restates the number instead of saying what "
-            "it was measured on. It must carry the observation scope as "
-            "params['scope'] and, where the file set is pinned, its manifest."
+            "it was measured on. It must carry the observation scope in the "
+            "vocabulary the measurement used (e.g. `path`, `document`, or the "
+            "literal `scope` key) and, where the file set is pinned, its "
+            "manifest."
         )
+    # Deliberately no ``scope`` requirement and no default: scope may arrive as
+    # ``path``/``document``/``file``/``pages`` (the vocabulary every historical
+    # ledger line uses), and writing a key that was not supplied would change
+    # the digest of every line that predates it.
     resolved_params = dict(params)
-    scope = resolved_params.get("scope")
-    if not isinstance(scope, str) or not scope.strip():
-        raise ValueError(
-            f"derive_finding({spec.name}): params['scope'] must name the "
-            f"observation scope ('.' for the dataset root, 'data/' for a "
-            f"subtree, or the file measured); got {scope!r}. A number without "
-            "its scope is a number about an unknown part of the dataset."
-        )
 
     payload: dict[str, Any] = {
         "dataset_id": dataset_id or workspace.current_dataset_id(),

@@ -237,6 +237,21 @@ class Ledger:
             handle.write(line + "\n")
         return len(self.lines())
 
+    def append_line(self, line: str) -> int:
+        """Append one already-serialized line **byte for byte**, after validating.
+
+        ``report-render`` uses this to promote appends a notebook made into a
+        staged ledger: the bytes the kernel wrote are the bytes that land, so a
+        promoted line is indistinguishable from the one the notebook would have
+        appended directly. Still ``"a"`` only — the line is not rewritten, only
+        checked that it is a decided finding.
+        """
+        Finding.from_json(line)
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        with self._path.open("a", encoding="utf-8") as handle:
+            handle.write(line.rstrip("\n") + "\n")
+        return len(self.lines())
+
     def verify(self) -> list[str]:
         """Re-validate every line. Empty means the ledger is well-formed.
 
