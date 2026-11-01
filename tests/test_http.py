@@ -325,3 +325,46 @@ def test_a_corrupt_pin_degrades_to_pin_error_not_a_500(server, roots):
     assert record["pinned"] is False
     assert record["dataset_commit"] is None
     assert "pin.json" in record["pin_error"]
+
+
+def test_a_report_rendered_before_the_nav_is_still_given_a_way_back(server, dataset_workspace):
+    """The complaint was a report with no back button, on a phone, in a web app.
+
+    Re-rendering a frozen deliverable to add a link is not an option, so the
+    chrome is spliced at the edge: the nav bar and the current stylesheet go
+    into the served copy, and the file on disk stays exactly as it was.
+    """
+    frozen = (
+        "<html><head><title>old</title><style>body{font-size:9px}</style></head>"
+        "<body><h1>vg books</h1><p>Six PDFs.</p></body></html>"
+    )
+    target = dataset_workspace / "report-2026-10-26.html"
+    target.write_text(frozen, encoding="utf-8")
+
+    status, _content_type, body = get(server, f"/report/{DATASET_ID}/report-2026-10-26.html")
+
+    assert status == 200
+    assert '<nav class="data-scout-nav">' in body
+    assert 'class="back" href="/"' in body
+    assert "All datasets" in body
+    # The content is still the frozen content, and the newer sheet lands last
+    # in <head> so its rules win over the 9px copy inside the document.
+    assert "<h1>vg books</h1>" in body
+    assert body.index("}</style>") < body.index("--measure")
+    # The file itself was not rewritten.
+    assert target.read_text(encoding="utf-8") == frozen
+
+
+def test_a_document_that_already_has_the_nav_is_not_dressed_twice(server, dataset_workspace):
+    from data_scout import render
+
+    rendered = (
+        "<html><head></head><body>"
+        + render.NAV_HTML
+        + "<h1>fresh</h1></body></html>"
+    )
+    target = dataset_workspace / "report-2026-10-26.html"
+    target.write_text(rendered, encoding="utf-8")
+
+    _status, _content_type, body = get(server, f"/report/{DATASET_ID}/report-2026-10-26.html")
+    assert body.count('<nav class="data-scout-nav">') == 1

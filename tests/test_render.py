@@ -415,3 +415,64 @@ def test_a_re_rendered_frame_line_is_appended_once(dataset_workspace, capsys):
     second_out = capsys.readouterr().out
     assert len(ledger_lines()) == 1, "an unchanged frame line was appended twice"
     assert "skipped 1 frame line" in second_out
+
+
+# --------------------------------------------------------------------------
+# the report has to be readable, and it has to have a way back
+# --------------------------------------------------------------------------
+
+THREE_SECTIONS = """# vg books
+
+Six PDFs, mostly art books.
+
+## What is here
+
+The tree holds 56 files.
+
+## Counts
+
+| unit | value |
+|---|---|
+| pages | 1778 |
+
+## Counts
+
+A second section with the same name must not steal the first one's anchor.
+"""
+
+
+def test_a_report_carries_the_way_back_to_the_index():
+    html = render.render_markdown("# t", title="t")
+
+    assert '<nav class="data-scout-nav">' in html
+    assert 'class="back" href="/"' in html
+    assert "All datasets" in html
+
+
+def test_a_long_report_gets_a_contents_with_working_anchors():
+    html = render.render_markdown(THREE_SECTIONS, title="vg books")
+
+    assert 'class="data-scout-toc"' in html
+    # Three sections, so the contents is an aid rather than furniture.
+    assert html.count('<li><a href="#') == 3
+    assert '<h2 id="counts">' in html
+    assert '<h2 id="counts-2">' in html
+    assert 'href="#counts-2"' in html
+    # After the title, not before it.
+    assert html.index("<h1") < html.index('class="data-scout-toc"')
+
+
+def test_a_short_report_gets_no_contents_card():
+    html = render.render_markdown("# t\n\ntext\n\n## one\n\nx\n\n## two\n\ny\n", title="t")
+    assert 'class="data-scout-toc"' not in html
+
+
+def test_the_rendered_report_inlines_the_current_stylesheet(dataset_workspace, capsys):
+    """A deliverable read offline still has to look like the one served."""
+    build_session(dataset_workspace, cells=[APPEND_CELL], report_text=THREE_SECTIONS)
+    assert render.main([DATASET_ID, "--quiet"]) == 0, capsys.readouterr().err
+
+    html = (dataset_workspace / "report-2026-10-26.html").read_text(encoding="utf-8")
+    assert "--measure" in html
+    assert '<nav class="data-scout-nav">' in html
+    assert 'class="data-scout-toc"' in html

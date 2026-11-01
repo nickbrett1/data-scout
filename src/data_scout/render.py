@@ -213,6 +213,18 @@ def stylesheet() -> str:
     return (resources.files("data_scout") / "styles" / "report.css").read_text(encoding="utf-8")
 
 
+#: The nav bar is what makes the artifact navigable on a phone: a web app has
+#: no browser back button, so the way back has to be on the page. ``__main__``
+#: also uses this exact opening tag as the marker for "already has the chrome",
+#: which is how a report rendered before it existed still gets the back link.
+NAV_MARKER = '<nav class="data-scout-nav">'
+
+NAV_HTML = (
+    NAV_MARKER
+    + '\n<a class="back" href="/"><span aria-hidden="true">\u2190</span> All datasets</a>'
+    + '\n<span class="brand">data-scout</span>\n</nav>'
+)
+
 _HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -224,11 +236,73 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 </style>
 </head>
 <body>
+{nav}
 <div class="data-scout-meta">{meta}</div>
+{toc}
 {body}
 </body>
 </html>
 """
+
+
+def _plain_text(token: Any) -> str:
+    """The visible text of an inline token, for a slug and a contents entry."""
+    pieces: list[str] = []
+    for child in token.children or []:
+        if child.type in {"text", "code_inline"}:
+            pieces.append(child.content)
+        elif child.type in {"softbreak", "hardbreak"}:
+            pieces.append(" ")
+    return "".join(pieces).strip()
+
+
+def _slugify(text: str, seen: dict[str, int]) -> str:
+    slug = "".join(char if char.isalnum() else "-" for char in text.lower())
+    slug = "-".join(part for part in slug.split("-") if part) or "section"
+    count = seen.get(slug, 0)
+    seen[slug] = count + 1
+    return slug if count == 0 else f"{slug}-{count + 1}"
+
+
+#: Below this many sections a table of contents is more furniture than aid.
+TOC_MIN_SECTIONS = 3
+
+
+def _structure(tokens: Sequence[Any]) -> tuple[dict[int, str], list[tuple[int, str, str]]]:
+    """Heading ids by token index, and the (level, text, id) of each h2.
+
+    Ids are assigned once, in document order, so the anchor a contents entry
+    points at is the anchor the heading carries — including the second "Counts"
+    section, which becomes ``counts-2`` rather than colliding with the first.
+    """
+    seen: dict[str, int] = {}
+    ids: dict[int, str] = {}
+    sections: list[tuple[int, str, str]] = []
+    for index, token in enumerate(tokens):
+        if token.type != "heading_open":
+            continue
+        inline = tokens[index + 1] if index + 1 < len(tokens) else None
+        text = _plain_text(inline) if inline is not None else ""
+        slug = _slugify(text, seen)
+        ids[index] = slug
+        if token.tag == "h2" and text:
+            sections.append((2, text, slug))
+    return ids, sections
+
+
+def _contents(sections: list[tuple[int, str, str]]) -> str:
+    """A contents card for a report long enough to need one."""
+    if len(sections) < TOC_MIN_SECTIONS:
+        return ""
+    items = "".join(
+        f'<li><a href="#{_escape(slug)}">{_escape(text)}</a></li>'
+        for _level, text, slug in sections
+    )
+    return (
+        '<nav class="data-scout-toc" aria-label="Contents">'
+        '<p class="toc-title">Contents</p>'
+        f"<ol>{items}</ol></nav>"
+    )
 
 
 def render_markdown(markdown: str, *, title: str, meta: str = "") -> str:
@@ -238,8 +312,31 @@ def render_markdown(markdown: str, *, title: str, meta: str = "") -> str:
     parser = MarkdownIt("commonmark", {"html": False, "linkify": False})
     parser.enable("table")
     parser.enable("strikethrough")
+
+    ids, sections = _structure(parser.parse(markdown))
+
+    def heading_open(
+        _renderer: Any, tokens: Sequence[Any], index: int, *_rest: Any
+    ) -> str:
+        token = tokens[index]
+        return f'<{token.tag} id="{_escape(ids.get(index, "section"))}">'
+
+    parser.add_render_rule("heading_open", heading_open)
     body = parser.render(markdown)
-    return _HTML_TEMPLATE.format(title=_escape(title), css=stylesheet(), meta=_escape(meta), body=body)
+    toc = _contents(sections)
+    if toc and "</h1>" in body:
+        # After the title, not above it: the contents is an aid to reading the
+        # report, not a preface that pushes the report down the page.
+        body = body.replace("</h1>", f"</h1>\n{toc}", 1)
+        toc = ""
+    return _HTML_TEMPLATE.format(
+        title=_escape(title),
+        css=stylesheet(),
+        meta=_escape(meta),
+        nav=NAV_HTML,
+        toc=toc,
+        body=body,
+    )
 
 
 def render_notebook(notebook: Any, *, title: str, meta: str = "") -> str:
@@ -257,7 +354,14 @@ def render_notebook(notebook: Any, *, title: str, meta: str = "") -> str:
         body = body[:start] + injected + body[end + len("</style>") :]
     else:
         body = injected + body
-    return _HTML_TEMPLATE.format(title=_escape(title), css=stylesheet(), meta=_escape(meta), body=body)
+    return _HTML_TEMPLATE.format(
+        title=_escape(title),
+        css=stylesheet(),
+        meta=_escape(meta),
+        nav=NAV_HTML,
+        toc="",
+        body=body,
+    )
 
 
 def _escape(text: str) -> str:
