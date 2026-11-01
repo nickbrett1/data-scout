@@ -740,6 +740,18 @@ def with_chrome(document: str, *, meta: str = "") -> str:
     return document[: opened.end()] + "\n" + chrome + document[opened.end() :]
 
 
+def html_document(body: str, *, title: str, meta: str = "") -> str:
+    """A whole styled document from already-rendered body HTML.
+
+    The counterpart to :func:`render_markdown` for a page that is not markdown —
+    the brief is a decision, laid out, not prose with numbers in it. Both go
+    through :data:`_HTML_TEMPLATE`, so one sheet dresses the whole site.
+    """
+    return _HTML_TEMPLATE.format(
+        title=_escape(title), css=stylesheet(), nav=NAV_HTML, meta=_escape(meta), body=body
+    )
+
+
 def render_notebook(notebook: Any, *, title: str, meta: str = "") -> str:
     """An executed ``.ipynb`` -> standalone HTML, code blocks scrolling not clipping."""
     from nbconvert import HTMLExporter

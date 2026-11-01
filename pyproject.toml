@@ -49,6 +49,7 @@ semantic = [
 
 [project.scripts]
 report-render = "data_scout.render:main"
+brief-render = "data_scout.brief:main"
 
 [build-system]
 requires = ["setuptools>=61.0"]

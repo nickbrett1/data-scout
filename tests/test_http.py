@@ -440,3 +440,18 @@ def test_the_image_declares_a_healthcheck_that_probes_livez():
     text = (Path(__file__).parents[1] / "Dockerfile").read_text(encoding="utf-8")
     assert "HEALTHCHECK" in text
     assert "/livez" in text
+
+
+def test_the_brief_leads_the_dataset_page(server, dataset_workspace):
+    """The decision comes before the transcripts: a dataset page is a question."""
+    (dataset_workspace / f"brief-{DATASET_ID}.html").write_text("<html><body>brief</body></html>", encoding="utf-8")
+
+    status, _content_type, body = get(server, "/report/")
+    _status_json, _ct, index = get(server, "/report/index.json")
+    names = json.loads(index)["datasets"][0]["names"]
+
+    assert status == 200
+    assert names[0] == f"brief-{DATASET_ID}.html"
+    assert "What to run on this dataset" in body
+    # the call to action replaces its own entry in the list
+    assert body.count(f"brief-{DATASET_ID}.html") == 1

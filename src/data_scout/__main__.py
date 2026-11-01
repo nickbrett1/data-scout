@@ -121,7 +121,7 @@ def index_payload() -> dict[str, Any]:
         record = by_id.get(directory.name) or inventory.WorkspaceOnlyDataset(directory.name).as_record()
         # The writer and the reader must not each know a location: ask the one
         # function that owns the convention's two directories.
-        files = [path.name for path in workspace.artifact_paths(directory.name)]
+        files = _order_artifacts([path.name for path in workspace.artifact_paths(directory.name)])
         record.update(
             {
                 "artifacts": [f"/report/{directory.name}/{name}" for name in files],
@@ -218,6 +218,23 @@ def index_html(payload: dict[str, Any]) -> str:
     return "".join(parts)
 
 
+#: Artifacts in the order a reader wants them: the decision first, then the
+#: evidence, then the raw session transcripts. Sorted alphabetically, a dataset
+#: page leads with ``session-1.html`` — the least publishable thing in the
+#: directory — and buries the brief it was written to support.
+_ARTIFACT_ORDER = ("brief-", "report-", "session-")
+
+
+def _order_artifacts(names: list[str]) -> list[str]:
+    def rank(name: str) -> tuple[int, str]:
+        for position, prefix in enumerate(_ARTIFACT_ORDER):
+            if name.startswith(prefix):
+                return (position, name)
+        return (len(_ARTIFACT_ORDER), name)
+
+    return sorted(names, key=rank)
+
+
 def _dataset_html(dataset: dict[str, Any]) -> list[str]:
     """One dataset: what it is, what it costs to look, and what has been made."""
     name = dataset["name"]
@@ -267,9 +284,21 @@ def _dataset_html(dataset: dict[str, Any]) -> list[str]:
     status_class = "status scouted" if dataset["scouted"] else "status"
     parts.append(f'<p class="{status_class}">{_escape(status)}</p>')
 
-    if dataset["names"]:
+    # The brief is the front page: a dataset page should answer "what should I
+    # run on this?" before it lists transcripts. It is pulled out of the list so
+    # the reader is not asked to choose between it and its own link.
+    pairs = list(zip(dataset["names"], dataset["artifacts"], strict=False))
+    briefs = [pair for pair in pairs if pair[0].startswith("brief-")]
+    rest = [pair for pair in pairs if not pair[0].startswith("brief-")]
+    if briefs:
+        _label, href = briefs[0]
+        parts.append(
+            f'<p class="brief-link"><a href="{_escape(href)}">'
+            "What to run on this dataset &rarr;</a></p>"
+        )
+    if rest:
         parts.append("<ul>")
-        for label, href in zip(dataset["names"], dataset["artifacts"], strict=False):
+        for label, href in rest:
             parts.append(f'<li><a href="{_escape(href)}">{_escape(label)}</a></li>')
         parts.append("</ul>")
     else:

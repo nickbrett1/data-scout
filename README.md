@@ -164,6 +164,35 @@ docker compose exec data-scout report-render <dataset-id> [--session N] [--verif
 report-render <dataset-id>          # in the dev environment, after `pip install -e .`
 ```
 
+#### The brief is the decision
+
+A report is evidence and reads like it. A reader's actual question — *what kind of
+analysis or system should I use on this?* — is a second document, and it is the
+front page of a dataset:
+
+```bash
+docker compose exec data-scout brief-render <dataset-id>
+```
+
+`brief-render` writes `brief-<dataset-id>.html` at the dataset root, where the
+index serves it and links it above the artifacts. It reads the ledger and nothing
+else, and it makes one of five calls from named facts:
+
+| what the numbers say | what to run |
+|---|---|
+| most parsed table parts carry text | a relational store, with BI on top |
+| documents are word-dense | document intelligence: parse, chunk, embed, retrieve |
+| documents are picture-dense | vision over page images: describe, then embed |
+| records exist but no text layer | OCR first, then document intelligence |
+| both populations present | the same two pipelines, routed per document |
+
+The rules are in `src/data_scout/brief.py`, and they are printed on the page: two
+numbers per document — words a page, pictures a page — decide more than any model
+choice, and `>` is a measurement with a threshold beside it, not a mood. Every
+reading cites the ledger line it came from, and an axis nobody measured is shown
+as **open** with the measurement that would settle it. The brief also states what
+it would take to overturn it, so it can be argued with instead of obeyed.
+
 #### The report is the ledger
 
 A report is not prose with numbers in it. The ledger is the spine: `findings.jsonl`

@@ -61,13 +61,13 @@ WORKSPACE_SUBDIRS = ("notebooks", "scratch", "samples", "cache", "staging")
 
 _DATASET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
-#: A rendered artifact is one of two things, and they do **not** share a
-#: directory: the deliverable (``report-*``) sits at the dataset root beside
-#: ``frame.md``/``findings.jsonl``, while the evidence appendix (``session-*``)
-#: sits with its notebook under ``notebooks/`` (convention §1, §4.1). The
-#: pattern lives here, beside :func:`artifact_path`, so the writer and the HTTP
-#: reader share one definition of "servable" as well as one definition of where.
-SERVABLE_ARTIFACT_RE = re.compile(r"^(report|session)-[A-Za-z0-9._-]*\.html$")
+#: A rendered artifact is one of three things, all at the dataset root: the
+#: decision (``brief-*``), the deliverable (``report-*``) and the session's
+#: evidence appendix (``session-*``). ``frame.md`` and ``findings.jsonl`` sit
+#: beside them. The pattern lives here, beside :func:`artifact_path`, so the
+#: writer and the HTTP reader share one definition of "servable" as well as one
+#: definition of where.
+SERVABLE_ARTIFACT_RE = re.compile(r"^(brief|report|session)-[A-Za-z0-9._-]*\.html$")
 
 
 class WorkspaceError(RuntimeError):
@@ -606,7 +606,7 @@ def notebook_dir(dataset_id: str) -> Path:
 
 
 def artifact_kind(filename: str) -> str | None:
-    """``"report"``, ``"session"``, or ``None`` if the name is not an artifact."""
+    """``"brief"``, ``"report"``, ``"session"``, or ``None`` if not an artifact."""
     match = SERVABLE_ARTIFACT_RE.fullmatch(filename)
     return match.group(1) if match else None
 
@@ -614,15 +614,16 @@ def artifact_kind(filename: str) -> str | None:
 def artifact_dir(dataset_id: str, kind: str) -> Path:
     """The **one** place a rendered artifact's directory is decided.
 
-    Both servable kinds — ``report-*.html`` and ``session-*.html`` — live at the
-    dataset root beside ``frame.md`` and ``findings.jsonl`` (convention §1 and
-    §4.1: ``report-*.md/.html`` at the dataset root, and a session's HTML is the
-    evidence appendix to the same deliverable). The notebook itself stays under
+    All three servable kinds — ``brief-*.html``, ``report-*.html`` and
+    ``session-*.html`` — live at the dataset root beside ``frame.md`` and
+    ``findings.jsonl`` (convention §1 and §4.1: ``report-*.md/.html`` at the
+    dataset root, and a session's HTML is the evidence appendix to the same
+    deliverable). The notebook itself stays under
     ``notebooks/``; only its rendered form is served. Both the writer
     (``render``) and the reader (``__main__``, for ``/report/``) call this, so
     a correct render cannot be invisible to the index by construction.
     """
-    if kind in ("report", "session"):
+    if kind in ("brief", "report", "session"):
         return workspace_dir(dataset_id)
     raise WorkspaceError(f"unknown artifact kind {kind!r}; expected 'report' or 'session'")
 
@@ -632,8 +633,8 @@ def artifact_path(dataset_id: str, filename: str) -> Path:
     kind = artifact_kind(filename)
     if kind is None:
         raise WorkspaceError(
-            f"{filename!r} is not a servable artifact: expected report-*.html or "
-            "session-*.html"
+            f"{filename!r} is not a servable artifact: expected brief-*.html, "
+            "report-*.html or session-*.html"
         )
     return artifact_dir(dataset_id, kind) / filename
 
@@ -645,7 +646,7 @@ def artifact_paths(dataset_id: str) -> list[Path]:
     never rendered anything is a normal state, not a broken one.
     """
     found: list[Path] = []
-    for kind in ("report", "session"):
+    for kind in ("brief", "report", "session"):
         try:
             entries = sorted(artifact_dir(dataset_id, kind).iterdir())
         except OSError:

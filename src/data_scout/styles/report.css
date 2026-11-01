@@ -595,6 +595,209 @@ body.jp-Notebook,
 
 /* --- print: ink, not a dark rectangle ----------------------------------- */
 
+/* The dataset page's first call to action: the brief, above the artifact list. */
+.brief-link {
+  margin: 0.9rem 0 0.6rem;
+}
+
+.brief-link a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: var(--tap);
+  padding: 0 0.85rem;
+  background: var(--accent-soft);
+  border: 1px solid #2b4a6b;
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.brief-link a:hover {
+  border-color: var(--accent);
+}
+
+/* --- the brief: a decision, not a table of readings ---------------------
+ *
+ * The report is evidence and reads like it. The brief is the front page of a
+ * dataset: one recommendation you can act on, the readings that force it, and
+ * the measurements that would overturn it. Same sheet, same shapes — the
+ * verdict gets the accent, the axes get cards, and the refutations get the
+ * warning treatment so they are not scrolled past.
+ */
+
+.brief-verdict {
+  margin: 1.5rem 0 2rem;
+  padding: 1rem 1.1rem;
+  background: var(--accent-soft);
+  border: 1px solid #2b4a6b;
+  border-radius: var(--radius);
+}
+
+.brief-label {
+  margin: 0 0 0.15rem;
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.brief-verdict h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.35rem;
+  line-height: 1.25;
+}
+
+.brief-verdict p:last-child {
+  margin-bottom: 0;
+  color: #cbd5e1;
+}
+
+.brief-axes,
+.brief-docs,
+.brief-do,
+.brief-not,
+.brief-open {
+  margin: 0 0 2rem;
+}
+
+.brief-axis {
+  margin: 0 0 0.5rem;
+  padding: 0.7rem 0.85rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  border-left: 3px solid var(--ok);
+}
+
+.brief-axis.a-open {
+  border-left-color: var(--warn);
+  background: var(--surface-2);
+}
+
+.brief-question {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.brief-reading {
+  margin: 0.2rem 0 0.3rem;
+  font-size: 0.98rem;
+  font-weight: 600;
+}
+
+.brief-implies {
+  margin: 0;
+  color: #cbd5e1;
+  font-size: 0.88rem;
+}
+
+.brief-axis.a-open .brief-implies {
+  color: var(--warn);
+}
+
+.brief-cite {
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.brief-note {
+  margin: -0.3rem 0 0.7rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.brief-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.brief-table th {
+  padding: 0.3rem 0.4rem;
+  color: var(--faint);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.brief-table th:first-child,
+.brief-table td:first-child {
+  text-align: left;
+}
+
+.brief-table td {
+  padding: 0.45rem 0.4rem;
+  border-top: 1px solid var(--border);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.brief-doc {
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  word-break: break-all;
+}
+
+.brief-kind {
+  display: inline-block;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+}
+
+.k-prose {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.k-plate {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.k-sparse,
+.k-mixed {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.k-unknown {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.brief-do ol,
+.brief-not ul,
+.brief-open ul {
+  margin: 0;
+  padding-left: 1.15rem;
+}
+
+.brief-do li,
+.brief-open li {
+  margin: 0.45rem 0;
+}
+
+.brief-not li {
+  margin: 0.45rem 0;
+  padding: 0.5rem 0.7rem;
+  background: var(--warn-soft);
+  border-radius: var(--radius-sm);
+  color: #f3dfa2;
+  list-style: none;
+  margin-left: -1.15rem;
+}
+
 @media print {
   :root {
     color-scheme: light;
