@@ -91,5 +91,6 @@ steps:
         docker buildx build --builder "$$BUILDX_BUILDER_NAME" --platform linux/amd64 \
           --cache-from type=registry,ref=$$CACHE_REF \
           --cache-to type=registry,ref=$$CACHE_REF,mode=max \
+          --build-arg GIT_SHA=$$BUILDKITE_COMMIT \
           --label org.opencontainers.image.revision=$$BUILDKITE_COMMIT \
           -t $$IMAGE:$$BUILDKITE_COMMIT -t $$IMAGE:latest --push .
