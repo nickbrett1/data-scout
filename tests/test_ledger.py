@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from data_scout.ledger import Finding, Ledger, diff_lines, normalized_line
+from data_scout.ledger import Finding, Ledger, diff_lines, normalized_line, pin_moved
 from data_scout.tools import findings_append
 
 
@@ -149,3 +149,25 @@ def test_a_refetched_observation_does_not_fail_the_diff():
     right = [record(params={"per_chars": 1000, "observation_source": "cache"})]
     assert diff_lines(left, right) == []
     assert "observation_source" not in normalized_line(left[0])
+
+
+def test_a_pin_move_is_its_own_axis_not_a_diff_failure():
+    """Two identical lines differing only in ``dataset_commit`` reproduce.
+
+    The §9 gate asks whether the measurement reproduced, not whether the store
+    was re-pinned between runs. This is the guard against a future reader
+    tidying the field back into the compared set: if it is re-added,
+    ``diff_lines`` stops returning empty here.
+    """
+    left = [record(dataset_commit="a" * 40)]
+    right = [record(dataset_commit="b" * 40)]
+
+    assert diff_lines(left, right) == []
+    assert pin_moved(left, right) == ["a" * 40, "b" * 40]
+
+    # Same pin on both sides is not a move.
+    assert pin_moved(left, [record(dataset_commit="a" * 40)]) == []
+    # Absent and explicit-null are the same provenance state, so not a move.
+    assert pin_moved([record()], [record(dataset_commit=None)]) == []
+    # A mid-session move inside one side is reported, not averaged away.
+    assert pin_moved(left + [record(dataset_commit="c" * 40)], left) == ["a" * 40, "c" * 40]

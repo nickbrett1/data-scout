@@ -52,6 +52,14 @@ class Finding(BaseModel):
 
     ts: datetime = Field(default_factory=utcnow)
     dataset_id: str
+    #: The pin the measurement was taken under, or ``None`` for an unversioned
+    #: dataset. **Absent ≠ null**: a line written before this field existed has
+    #: no key and its provenance is dataset_id-only ("we did not know"); a line
+    #: written since has the key and may say null ("there is nothing to know").
+    #: A reader must not conflate the two. ``model_dump`` fills every declared
+    #: field, so re-serialising an old line *adds* ``"dataset_commit": null`` —
+    #: that is why ``VOLATILE_FIELD_KEYS`` drops it from the §9 diff.
+    dataset_commit: str | None = None
     session: int = Field(ge=1)
     unit: str
     tool: str
@@ -151,8 +159,18 @@ class Finding(BaseModel):
 #: to describe.
 VOLATILE_PARAM_KEYS = ("observation_source",)
 
+#: **Field-level** volatile keys, distinct from ``VOLATILE_PARAM_KEYS`` (which is
+#: stripped only inside ``params``). ``ts`` always differed between executions.
+#: ``dataset_commit`` legitimately varies when the store is re-pinned between
+#: two runs of the same notebook: the measurement can reproduce byte for byte
+#: while the pin moves. Dropping it from the multiset diff keeps the §9 gate
+#: asking "did the measurement reproduce", not "was the store still"; the pin
+#: movement is reported as its own verdict by :func:`pin_moved`, never as a
+#: diff failure and never by silently deleting the field from the line.
+VOLATILE_FIELD_KEYS = ("ts", "dataset_commit")
 
-def normalized_line(line: str | dict, *, drop: tuple[str, ...] = ("ts",)) -> str:
+
+def normalized_line(line: str | dict, *, drop: tuple[str, ...] = VOLATILE_FIELD_KEYS) -> str:
     """A ledger line with the volatile fields dropped, for the §9 diff.
 
     The reproducibility claim is scoped to these lines and to nothing else:
@@ -173,7 +191,7 @@ def diff_lines(
     left: Sequence[str | dict],
     right: Sequence[str | dict],
     *,
-    drop: tuple[str, ...] = ("ts",),
+    drop: tuple[str, ...] = VOLATILE_FIELD_KEYS,
 ) -> list[str]:
     """Multiset difference of two ledgers, modulo ``drop``.
 
@@ -194,6 +212,48 @@ def diff_lines(
     for missing in sorted((left_bag - right_bag).elements()):
         problems.append(f"only in the ledger: {missing}")
     return problems
+
+
+def _distinct_commits(lines: Sequence[str | dict]) -> set[str | None]:
+    """The distinct ``dataset_commit`` values in a sequence of lines.
+
+    An absent key and an explicit null are both ``None`` here: for the purpose
+    of "did the pin move" they are the same provenance state (no pin named).
+    """
+    values: set[str | None] = set()
+    for line in lines:
+        if isinstance(line, str) and not line.strip():
+            continue
+        data = json.loads(line) if isinstance(line, str) else dict(line)
+        values.add(data.get("dataset_commit"))
+    return values
+
+
+def pin_moved(left: Sequence[str | dict], right: Sequence[str | dict]) -> list[str]:
+    """Distinct ``dataset_commit`` values on each side, when they differ.
+
+    Empty means the two runs name the same pin (or both name none). A value on
+    both sides is a move. More than one value on **one** side also reports:
+    that is a mid-session move, not two runs. ``None`` is not returned as a
+    commit — it is the absence of one, and the caller reads "moved" from the
+    non-empty result, not from a sentinel.
+    """
+    left_values = _distinct_commits(left)
+    right_values = _distinct_commits(right)
+    if left_values == right_values:
+        return []
+    return sorted(value for value in (left_values | right_values) if value is not None)
+
+
+def ledger_pins(findings: Sequence[Finding]) -> list[str | None]:
+    """The distinct pins recorded in a ledger, sorted. More than one is a mid-session move.
+
+    ``None`` (a line with no pin) is kept as a distinct provenance state and
+    sorts first, so a ledger that mixes a pinned line and an unpinned one does
+    not report a single pin by hiding the other.
+    """
+    values = {finding.dataset_commit for finding in findings}
+    return sorted(values, key=lambda value: (value is not None, value or ""))
 
 
 class Ledger:
