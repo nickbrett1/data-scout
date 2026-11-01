@@ -463,11 +463,10 @@ def _finding_html(
     number: int, finding: Any, lines: Sequence[int], commentary: str, render_block: Any
 ) -> str:
     """One row of the table: a line you can scan, that opens into the prose."""
-    what = _row_params(finding.params)
     value = _short_value(_format_value(finding.value))
+    # Params are how it was measured, not what it means: they belong in the
+    # detail. On the card they were the longest, least readable thing on screen.
     meta = [f'<span class="f-n">n={finding.n:,}</span>', f'<span class="f-session">s{finding.session}</span>']
-    if what:
-        meta.append(f'<span class="f-what">{_escape(what)}</span>')
     # Three lines, not six columns: the number and the instrument, the value at
     # a size you can scan, and the provenance as small print. Six columns is
     # fine on a desktop and unreadable at 360px, and this is read on a phone.
