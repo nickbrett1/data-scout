@@ -20,6 +20,8 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any, NoReturn
 
+from data_scout.exclusions import EXCLUDED_DIRS, EXCLUDED_FILES
+
 #: The three keys every instrument returns (``data-scout-convention`` §5).
 RESULT_KEYS = ("value", "n", "unit_notes")
 
@@ -152,6 +154,22 @@ def capped(items: Iterable[Any], limit: int) -> tuple[list[Any], bool]:
     return out, False
 
 
+def _walk(root: Path, *, follow_symlinks: bool) -> Iterator[Path]:
+    """Every file under ``root``, never descending into version control.
+
+    ``.git`` and ``.dvc`` are not the dataset: walking them measures git's
+    bookkeeping and DVC's lockfiles, which is true and useless, and it changes
+    the numbers for reasons the corpus does not.
+    """
+    for directory, dirs, files in os.walk(root, followlinks=follow_symlinks):
+        dirs[:] = [name for name in dirs if name not in EXCLUDED_DIRS]
+        at_root = Path(directory) == root
+        for name in sorted(files):
+            if at_root and name in EXCLUDED_FILES:
+                continue
+            yield Path(directory) / name
+
+
 def iter_files(
     path: str | os.PathLike[str],
     *,
@@ -173,11 +191,7 @@ def iter_files(
     if root.is_file():
         candidates: Iterator[Path] = iter([root])
     elif root.is_dir():
-        candidates = (
-            Path(directory) / name
-            for directory, _dirs, files in os.walk(root, followlinks=follow_symlinks)
-            for name in sorted(files)
-        )
+        candidates = _walk(root, follow_symlinks=follow_symlinks)
     else:
         candidates = iter(())
     count = 0

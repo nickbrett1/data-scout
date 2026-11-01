@@ -42,6 +42,16 @@ from typing import Any
 
 from data_scout import workspace
 
+#: The exclusion set lives in :mod:`data_scout.exclusions` — the frame, the
+#: toolbelt's walks, the inventory and the report all have to agree on what is
+#: *not* the dataset, and a second copy of the rule is a second answer.
+#: (Re-exported here because the ledger already names these.)
+from data_scout.exclusions import (  # noqa: F401
+    EXCLUSION_NAMES,
+    FRAME_EXCLUSIONS,
+    Exclusion,
+)
+
 #: The version of the *frame schema* this module emits. A frame without a
 #: ``frame_schema`` key is version 1 (the phase-1 record on ``vg-books-2026-10``
 #: is one). Version 2 adds the payload identity, the declared exclusion set and
@@ -96,53 +106,6 @@ class PinStale(FrameMeasureError):
     ``overwrite_reason``; and a re-commit during a session is a human act that
     ought to be followed by a frame re-measure.
     """
-
-
-@dataclass(frozen=True)
-class Exclusion:
-    """One declared exclusion: a name, the path it covers, and why.
-
-    ``name`` is what the frame records. ``path`` is a path relative to the
-    dataset root. The pair is data, so a reader can see *what* was left out
-    without reading this module's walk.
-    """
-
-    name: str
-    path: str
-    why: str
-
-
-#: The explicit exclusion set. Both entries are VCS transient state: git
-#: rewrites its index/logs, and DVC rewrites its own lockfiles. Neither is part
-#: of the corpus, and both change for reasons unrelated to the data.
-FRAME_EXCLUSIONS: tuple[Exclusion, ...] = (
-    Exclusion(
-        name="git-internals",
-        path=".git",
-        why="git rewrites its index, logs and refs on ordinary VCS activity",
-    ),
-    Exclusion(
-        name="dvc-internals",
-        path=".dvc",
-        why=(
-            "DVC rewrites .dvc/tmp/lock and .dvc/tmp/rwlock.lock on ordinary "
-            "DVC activity; measured 9 -> 8 bytes with the payload untouched"
-        ),
-    ),
-    Exclusion(
-        name="dataset-pin",
-        path="pin.json",
-        why=(
-            "written by /srv/bin/datasets on the host when a pin is recorded; it is a "
-            "claim about the payload, not part of it, and it changes on ordinary "
-            "pinning activity with the payload untouched"
-        ),
-    ),
-)
-
-#: The exclusion names in force. Recorded in every v2 frame.
-EXCLUSION_NAMES: tuple[str, ...] = tuple(item.name for item in FRAME_EXCLUSIONS)
-
 
 @dataclass(frozen=True)
 class TreeIdentity:

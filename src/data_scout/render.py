@@ -340,6 +340,22 @@ FINDING_MARKER = re.compile(r"^[ \t]*<!--[ \t]*finding:[ \t]*(\d+)[ \t]*-->[ \t]
 #: of text again. Everything after this marker is rendered below the table.
 NOTES_MARKER = re.compile(r"^[ \t]*<!--[ \t]*notes[ \t]*-->[ \t]*$", re.MULTILINE)
 
+#: Lines the report declines to show. A ledger is append-only, so a measurement
+#: taken against something that is not the dataset — git's index, DVC's lock
+#: files — stays in the record forever; the report says so and moves on, rather
+#: than making the reader scroll past 56 files that are not books.
+#:
+#:     <!-- exclude: 1, 2, 4 -->
+EXCLUDE_MARKER = re.compile(r"^[ \t]*<!--[ \t]*exclude:[ \t]*([\d,\s]+)-->[ \t]*$", re.MULTILINE)
+
+
+def excluded_lines(markdown: str) -> set[int]:
+    """The ledger lines the report names as not part of the dataset."""
+    lines: set[int] = set()
+    for match in EXCLUDE_MARKER.finditer(markdown):
+        lines.update(int(number) for number in re.findall(r"\d+", match.group(1)))
+    return lines
+
 #: The params worth showing in the row itself, in this order. Everything else
 #: is in the row's detail: the row answers "what is this number", the detail
 #: answers "how was it measured".
@@ -522,14 +538,20 @@ def _distinct_rows(findings: Sequence[Any]) -> list[tuple[Any, list[int]]]:
 
 
 def _findings_html(
-    findings: Sequence[Any], commentary: dict[int, str], render_block: Any
+    findings: Sequence[Any],
+    commentary: dict[int, str],
+    render_block: Any,
+    excluded: set[int] | None = None,
 ) -> tuple[str, set[int]]:
     """The table itself, with a one-line count of what the ledger holds.
 
     Returns the HTML and the marker numbers it consumed, so the caller can tell
     a stale marker (a line that no longer exists) from a used one.
     """
-    rows = _distinct_rows(findings)
+    excluded = excluded or set()
+    every_row = _distinct_rows(findings)
+    rows = [row for row in every_row if not set(row[1]) & excluded]
+    dropped = len(every_row) - len(rows)
     row_of_line = {
         line: row_number
         for row_number, (_finding, lines) in enumerate(rows, start=1)
@@ -559,9 +581,16 @@ def _findings_html(
         f'{"" if len(rows) == 1 else "s"} · {promoted} promoted · '
         f"{len(rows) - promoted} retired{reappends} · {_escape(', '.join(tools))}</p>"
     )
+    note = ""
+    if dropped:
+        note = (
+            f'<p class="findings-count">Not shown: {dropped} finding'
+            f'{"" if dropped == 1 else "s"} measured version-control internals '
+            "(`.git`, `.dvc`), which is not the dataset.</p>"
+        )
     return (
         '<section class="findings" aria-label="Findings">'
-        f"{summary}{body}</section>",
+        f"{summary}{body}{note}</section>",
         used,
     )
 
@@ -629,7 +658,7 @@ def render_markdown(
             for number, text in sorted(commentary.items())
         )
     elif findings:
-        table, used = _findings_html(findings, commentary, render_block)
+        table, used = _findings_html(findings, commentary, render_block, excluded_lines(markdown))
         extras.append(table)
         orphans = {number: text for number, text in commentary.items() if number not in used}
         if orphans:

@@ -30,6 +30,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from data_scout.exclusions import EXCLUDED_DIRS, EXCLUDED_FILES
 from data_scout.frame import ledger_frame_schemas
 from data_scout.ledger import Ledger
 from data_scout.workspace import (
@@ -157,9 +158,14 @@ def summarize(dataset_id: str, path: Path, *, max_entries: int = MAX_SCAN_ENTRIE
                     break
                 try:
                     if entry.is_dir(follow_symlinks=False):
+                        # The index reports the dataset, not the checkout.
+                        if entry.name in EXCLUDED_DIRS:
+                            continue
                         directories += 1
                         stack.append(Path(entry.path))
                     elif entry.is_file(follow_symlinks=False):
+                        if current == path and entry.name in EXCLUDED_FILES:
+                            continue
                         stat = entry.stat(follow_symlinks=False)
                         files += 1
                         total += stat.st_size
