@@ -223,6 +223,12 @@ def stylesheet() -> str:
 #: which is how a report rendered before it existed still gets the back link.
 NAV_MARKER = '<nav class="data-scout-nav">'
 
+#: Marks the stylesheet this app owns inside a document it did not author, so a
+#: serve-time splice can *replace* an older copy instead of stacking in front of
+#: it: a frozen artifact then follows the current sheet without being rewritten.
+STYLE_ATTR = 'data-data-scout=""'
+_STYLE_BLOCK = re.compile(r"<style data-data-scout[^>]*>.*?</style>", re.DOTALL)
+
 NAV_HTML = (
     NAV_MARKER
     + '\n<a class="back" href="/"><span aria-hidden="true">\u2190</span> All datasets</a>'
@@ -234,8 +240,9 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>{title}</title>
-<style>
+<style data-data-scout="">
 {css}
 </style>
 </head>
@@ -434,16 +441,24 @@ def _finding_html(
 ) -> str:
     """One row of the table: a line you can scan, that opens into the prose."""
     what = _row_params(finding.params)
+    value = _format_value(finding.value)
+    meta = [f'<span class="f-n">n={finding.n:,}</span>', f'<span class="f-session">s{finding.session}</span>']
+    if what:
+        meta.append(f'<span class="f-what">{_escape(what)}</span>')
+    # Three lines, not six columns: the number and the instrument, the value at
+    # a size you can scan, and the provenance as small print. Six columns is
+    # fine on a desktop and unreadable at 360px, and this is read on a phone.
     summary = [
+        '<span class="f-top">',
         f'<span class="f-no">{number}</span>',
-        '<span class="f-tool">'
-        f"<code>{_escape(finding.tool)}</code>"
-        + (f'<span class="f-what">{_escape(what)}</span>' if what else "")
-        + "</span>",
-        f'<span class="f-value">{_escape(_format_value(finding.value))}</span>',
+        f'<span class="f-tool"><code>{_escape(finding.tool)}</code></span>',
+        '<span class="f-caret" aria-hidden="true"></span>',
+        "</span>",
+        '<span class="f-figure">',
+        f'<span class="f-value{" f-long" if len(value) > 20 else ""}">{_escape(value)}</span>',
         f'<span class="f-unit">{_escape(finding.unit)}</span>',
-        f'<span class="f-n">n={finding.n:,}</span>',
-        f'<span class="f-session">s{finding.session}</span>',
+        "</span>",
+        f'<span class="f-meta">{"".join(meta)}</span>',
     ]
     body = _detail_rows(finding, lines)
     if commentary:
@@ -504,12 +519,6 @@ def _findings_html(
 
     promoted = sum(1 for finding, _lines in rows if finding.promoted)
     tools = sorted({finding.tool for finding, _lines in rows})
-    header = (
-        '<div class="findings-head" aria-hidden="true">'
-        '<span class="f-no">#</span><span class="f-tool">finding</span>'
-        '<span class="f-value">value</span><span class="f-unit">unit</span>'
-        '<span class="f-n">n</span><span class="f-session">s</span></div>'
-    )
     body = "".join(
         _finding_html(row_number, finding, lines, blocks.get(row_number, ""), render_block)
         for row_number, (finding, lines) in enumerate(rows, start=1)
@@ -525,7 +534,7 @@ def _findings_html(
     )
     return (
         '<section class="findings" aria-label="Findings">'
-        f"{summary}{header}{body}</section>",
+        f"{summary}{body}</section>",
         used,
     )
 
@@ -645,19 +654,26 @@ def with_chrome(document: str, *, meta: str = "") -> str:
     Used for the notebook rendition and, at serve time, for a report rendered
     before the chrome existed (``__main__.artifact``).
     """
-    if NAV_MARKER in document:
-        return document
     opened = _BODY_OPEN.search(document)
     if "</head>" not in document and opened is None:
         return document
 
-    sheet = f"<style>\n{stylesheet()}\n</style>"
-    if "</head>" in document:
+    # The sheet is replaced, not merely inserted. An artifact carries a copy of
+    # the stylesheet it was rendered with, so inserting ours a second time would
+    # leave the old rules in front of the new ones — and a frozen report would
+    # never pick up a restyle. Marked, therefore, and swapped.
+    sheet = f"<style {STYLE_ATTR}>\n{stylesheet()}\n</style>"
+    if _STYLE_BLOCK.search(document):
+        document = _STYLE_BLOCK.sub(lambda _match: sheet, document, count=1)
+    elif "</head>" in document:
         document = document.replace("</head>", f"{sheet}\n</head>", 1)
     elif opened is not None:
         document = document[: opened.start()] + sheet + "\n" + document[opened.start() :]
     else:
         document = sheet + document
+
+    if NAV_MARKER in document:
+        return document
 
     opened = _BODY_OPEN.search(document)
     chrome = NAV_HTML

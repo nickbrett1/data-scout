@@ -94,22 +94,6 @@ _A2A_DETAIL = (
     f"attach to. A card pointing here would list green and fail every turn."
 )
 
-_INDEX_CSS = """
-body{margin:0 auto;padding:1.6rem 1.1rem;max-width:38em;color:#1b1b1b;background:#fdfdfc;
-font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
-h1{font-size:1.4rem}h2{font-size:1.1rem;margin-top:1.8rem}
-li{margin:.25rem 0}a{color:#2a5d8f}code{background:#f2f2ee;padding:.1em .3em;border-radius:3px}
-.muted{color:#6b6b6b;font-size:.9em}
-.warn{color:#8a4b00;background:#fff6e6;padding:.5rem .7rem;border-radius:4px;font-size:.92em}
-.stats{color:#3a3a3a;font-size:.92em}
-.status{font-size:.82em;text-transform:uppercase;letter-spacing:.05em;color:#6b6b6b;margin:.2rem 0 0}
-.status.scouted{color:#2a6b3f}
-@media (prefers-color-scheme:dark){body{color:#e6e4df;background:#16171a}a{color:#7fb3e0}
-code{background:#22242a}.muted{color:#9b9b96}.warn{color:#e0b070;background:#2a2416}
-.stats{color:#c9c7c2}.status{color:#9b9b96}.status.scouted{color:#8fce9f}}
-"""
-
-
 def index_payload() -> dict[str, Any]:
     """Every dataset available to scout, and the frozen artifacts it holds.
 
@@ -204,9 +188,14 @@ def index_html(payload: dict[str, Any]) -> str:
         '<meta name="theme-color" content="#1b1d22">',
         '<meta name="apple-mobile-web-app-title" content="data-scout">',
         '<meta name="apple-mobile-web-app-capable" content="yes">',
+        '<meta name="color-scheme" content="dark">',
         "<title>data-scout datasets</title><style>",
-        _INDEX_CSS,
-        "</style></head><body><h1>data-scout datasets</h1>",
+        render.stylesheet(),
+        "</style></head><body>",
+        # The same chrome the reports carry, so the site is one thing on a phone.
+        '<nav class="data-scout-nav"><span class="brand">data-scout</span>'
+        '<span class="brand">datasets</span></nav>',
+        "<h1>datasets</h1>",
         f'<p class="muted">workspace <code>{_escape(payload["workspace"])}</code> · '
         f'datasets <code>{_escape(payload["datasets_root"])}</code> · v{_escape(payload["version"])}'
         # Short for the eye, full in the tooltip: the hash is here to answer
@@ -233,7 +222,7 @@ def _dataset_html(dataset: dict[str, Any]) -> list[str]:
     """One dataset: what it is, what it costs to look, and what has been made."""
     name = dataset["name"]
     dataset_id = dataset["dataset_id"]
-    parts = [f"<h2>{_escape(name)}"]
+    parts = ['<section class="card">', f"<h2>{_escape(name)}"]
     if name != dataset_id:
         parts.append(f' <span class="muted">({_escape(dataset_id)})</span>')
     parts.append("</h2>")
@@ -285,6 +274,7 @@ def _dataset_html(dataset: dict[str, Any]) -> list[str]:
         parts.append("</ul>")
     else:
         parts.append('<p class="muted">No reports yet.</p>')
+    parts.append("</section>")
     return parts
 
 

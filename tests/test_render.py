@@ -82,7 +82,8 @@ def test_a_render_executes_verifies_and_writes_both_renditions(dataset_workspace
     assert session_html.is_file()
     assert report_html.is_file()
     assert "<table>" in report_html.read_text(encoding="utf-8")
-    assert "prefers-color-scheme" in report_html.read_text(encoding="utf-8")
+    # The sheet is devdash's, so the two apps read the same on one phone.
+    assert "--bg: #0f172a" in report_html.read_text(encoding="utf-8")
 
 
 def test_writer_and_reader_agree_on_the_session_html_location(dataset_workspace, capsys):
@@ -752,3 +753,14 @@ def test_report_only_rerenders_the_prose_without_executing_a_cell(dataset_worksp
     html = (dataset_workspace / "report-2026-10-26.html").read_text(encoding="utf-8")
     assert "Reworded." in html
     assert workspace.ledger_path(DATASET_ID).read_text(encoding="utf-8") == before
+
+
+def test_a_frozen_report_takes_the_current_sheet_instead_of_stacking_a_second():
+    """An artifact carries the sheet it was rendered with; a restyle must land."""
+    dressed = render.with_chrome("<html><head></head><body><h1>t</h1></body></html>")
+    stale = dressed.replace("--bg: #0f172a", "--bg: #ffffff")
+    refreshed = render.with_chrome(stale)
+    assert refreshed.count("data-data-scout") == 1
+    assert "--bg: #ffffff" not in refreshed
+    assert refreshed.count(render.NAV_MARKER) == 1
+    assert refreshed == render.with_chrome(refreshed)
