@@ -33,7 +33,7 @@ import operator
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from data_scout import render
 
@@ -183,8 +183,8 @@ CATALOGUE: tuple[Profile, ...] = (
             "keeping, each traceable to a page."
         ),
         gates=(
-            Criterion("words_per_page_median", ">= 150", tool="pdf_text_compare"),
-            Criterion("text_layer_share", ">= 0.8", tool="pdf_text_compare"),
+            Criterion("words_per_page_median", ">= 150", tool="partition_doc"),
+            Criterion("text_layer_share", ">= 0.8", tool="pdf_forensics"),
             Criterion("table_share", "< 0.5", tool="structure_mix"),
         ),
         favours=(
@@ -192,7 +192,7 @@ CATALOGUE: tuple[Profile, ...] = (
             Criterion("narrative_share_median", ">= 0.5", weight=2, tool="structure_mix"),
             Criterion("documents", "<= 200", tool="frame"),
         ),
-        partial=(Criterion("words_per_page", ">= 150", tool="pdf_text_compare"),),
+        partial=(Criterion("words_per_page", ">= 150", tool="partition_doc"),),
         moves=(
             "Parse one book end to end and check the section structure by eye before trusting the "
             "chunker.",
@@ -222,15 +222,15 @@ CATALOGUE: tuple[Profile, ...] = (
             "the page it came from."
         ),
         gates=(
-            Criterion("text_layer_share", ">= 0.8", tool="pdf_text_compare"),
+            Criterion("text_layer_share", ">= 0.8", tool="pdf_forensics"),
             Criterion("table_share", "< 0.5", tool="structure_mix"),
         ),
         favours=(
-            Criterion("words_per_page_median", ">= 150", weight=2, tool="pdf_text_compare"),
+            Criterion("words_per_page_median", ">= 150", weight=2, tool="partition_doc"),
             Criterion("corpus_words", "<= 5000000", weight=1, tool="partition_doc"),
             Criterion("dup_share", "<= 0.2", weight=1, tool="near_dup_docs"),
         ),
-        partial=(Criterion("words_per_page", ">= 150", tool="pdf_text_compare"),),
+        partial=(Criterion("words_per_page", ">= 150", tool="partition_doc"),),
         moves=(
             "Index a sample of about a hundred pages and grade twenty real questions before "
             "indexing the rest.",
@@ -267,7 +267,7 @@ CATALOGUE: tuple[Profile, ...] = (
         ),
         favours=(
             Criterion("images_per_page_max", ">= 20", weight=2, tool="pdf_forensics"),
-            Criterion("text_layer_share", "<= 0.5", weight=1, tool="pdf_text_compare"),
+            Criterion("text_layer_share", "<= 0.5", weight=1, tool="pdf_forensics"),
         ),
         partial=(Criterion("images_per_page", ">= 5", tool="pdf_forensics"),),
         moves=(
@@ -326,7 +326,7 @@ CATALOGUE: tuple[Profile, ...] = (
         ),
         gates=(
             Criterion("table_share", ">= 0.2", tool="structure_mix"),
-            Criterion("words_per_page_median", "<= 300", tool="pdf_text_compare"),
+            Criterion("words_per_page_median", "<= 300", tool="partition_doc"),
         ),
         favours=(
             Criterion("table_share", ">= 0.4", weight=2, tool="structure_mix"),
@@ -372,7 +372,7 @@ CATALOGUE: tuple[Profile, ...] = (
             "was searched for."
         ),
         gates=(
-            Criterion("entity_density", "> 0", tool="entity_census"),
+            Criterion("entity_density", "> 0"),  # nothing in the belt measures this yet
             Criterion("documents", ">= 1", tool="frame"),
         ),
         moves=(
@@ -498,6 +498,113 @@ def evaluate_one(corpus: Corpus, profile: Profile) -> Assessment:
 
     return Assessment(
         profile=profile, gates=gates, favours=favours, outcome="fits", score=_score(favours)
+    )
+
+
+#: Facts the catalogue asks for that no instrument in the belt answers. They are
+#: named here rather than given a plausible-looking tool name: an "unknown" that
+#: points at a tool which does not exist is worse than one that says so.
+UNOWNED_FACTS = frozenset({"entity_density"})
+
+#: The smallest minority that is worth its own run. Below this, a document that
+#: goes another way is an exception to route, not a corpus to split: one artbook
+#: in eight does not make the other seven a different dataset.
+SPLIT_MINORITY_SHARE = 0.25
+
+
+@dataclass(frozen=True)
+class DocumentRoute:
+    """One document, and the profile whose per-document test it satisfies.
+
+    A profile's ``partial`` criteria are exactly the tests that can be answered
+    *for one document* — "is this book word-dense enough to read as prose?" — so
+    they are what decides where a single document goes. When no profile's test
+    holds, the document is unrouted, and that is a statement about the catalogue,
+    not a defect in the document.
+    """
+
+    document: str
+    profile: Profile | None
+    cells: tuple[Cell, ...] = ()
+
+    @property
+    def outcome(self) -> str:
+        return "unrouted" if self.profile is None else self.profile.id
+
+
+def _document_cell(document: Any, criterion: Criterion) -> Cell:
+    value = document.value(criterion.fact)
+    if value is None:
+        return Cell(criterion, "unknown", lines=document.lines)
+    return Cell(
+        criterion,
+        "pass" if criterion.holds(float(value)) else "fail",
+        observed=f"{float(value):,.0f}" if abs(float(value)) >= 100 else f"{float(value):g}",
+        lines=document.lines,
+    )
+
+
+def document_routes(
+    corpus: Corpus, catalogue: Sequence[Profile] = CATALOGUE
+) -> tuple[DocumentRoute, ...]:
+    """Route each document to the first profile whose per-document test it meets.
+
+    Catalogue order is the precedence: the more specific use-case asks first, so a
+    word-dense book with pictures is a literature-mining document rather than a
+    vision one. A document no profile claims is reported as unrouted rather than
+    forced into the nearest fit.
+    """
+    routes: list[DocumentRoute] = []
+    for document in corpus.documents:
+        route = DocumentRoute(document=document.name, profile=None)
+        for profile in catalogue:
+            if not profile.partial:
+                continue
+            cells = tuple(_document_cell(document, criterion) for criterion in profile.partial)
+            if cells and all(cell.state == "pass" for cell in cells):
+                route = DocumentRoute(document=document.name, profile=profile, cells=cells)
+                break
+        routes.append(route)
+    return tuple(routes)
+
+
+def routing_counts(routes: Sequence[DocumentRoute]) -> dict[str, int]:
+    """How many documents each profile would serve, in first-seen order."""
+    counts: dict[str, int] = {}
+    for route in routes:
+        counts[route.outcome] = counts.get(route.outcome, 0) + 1
+    return counts
+
+
+def split_advice(routes: Sequence[DocumentRoute]) -> str:
+    """One sentence: is this corpus one job, two runs, or one exception?
+
+    The question the routing table cannot answer by itself. Below
+    :data:`SPLIT_MINORITY_SHARE` the minority is routed as an exception, because
+    splitting a corpus costs a second pipeline, a second index and a join.
+    """
+    counts = routing_counts(routes)
+    if len([key for key in counts if key != "unrouted"]) < 2:
+        return "One profile serves every profiled document: no split is warranted."
+    total = len(routes)
+    leader, leader_count = max(counts.items(), key=lambda item: item[1])
+    minority = total - leader_count
+    share = minority / total if total else 0.0
+    if share >= SPLIT_MINORITY_SHARE:
+        others = ", ".join(
+            f"{count} {key}" for key, count in counts.items() if key not in (leader, "unrouted")
+        )
+        return (
+            f"Worth splitting: {minority} of {total} documents ({share:.0%}) need a different "
+            f"pipeline from the {leader_count} that are {leader}"
+            + (f" — the others are {others}" if others else "")
+            + ". Run them as two corpora and join the results, rather than averaging them here."
+        )
+    return (
+        f"Not worth splitting: {leader_count} of {total} documents are {leader}, and the "
+        f"{minority} that {'is' if minority == 1 else 'are'} not "
+        f"({share:.0%}) {'is an exception to route' if minority == 1 else 'are exceptions to route'}, "
+        "not a second corpus."
     )
 
 

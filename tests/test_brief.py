@@ -37,7 +37,7 @@ def line(
 
 def document(path: str, *, pages: int, words: int) -> Finding:
     return line(
-        tool="pdf_text_compare",
+        tool="partition_doc",
         value=0.9,
         unit="ratio",
         n=pages,
@@ -172,3 +172,14 @@ def test_the_brief_stops_at_the_decision():
 
     for heading in ("First moves", "What would change this", "Where this comes from"):
         assert heading not in html
+
+
+def test_the_document_table_says_where_each_document_goes():
+    """A row a reader can act on: this book is not this corpus's job."""
+    corpus = brief.read([PROSE_BOOK, PLATE_BOOK, HAS_TEXT, tables(parts=8, with_text=0)])
+
+    html = brief.render_brief(corpus)
+
+    assert "goes to" in html
+    assert "literature-mining" in html
+    assert "Not worth splitting" in html or "Worth splitting" in html

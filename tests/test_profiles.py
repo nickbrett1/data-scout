@@ -178,7 +178,12 @@ def test_every_profile_is_a_use_case_with_a_consumer_and_a_tool_per_test():
         assert profile.summary, f"{profile.id} does not say what it is for"
         for criterion in (*profile.gates, *profile.favours, *profile.partial):
             criterion.parsed()  # raises on an unreadable test
-            assert criterion.tool, f"{profile.id} asks {criterion.fact} with no instrument named"
+            if criterion.fact in profiles.UNOWNED_FACTS:
+                # Naming a tool that does not exist would make an unknown look
+                # answerable; the catalogue has to admit what the belt cannot do.
+                assert criterion.tool is None, f"{profile.id} invents a tool for {criterion.fact}"
+            else:
+                assert criterion.tool, f"{profile.id} asks {criterion.fact} with no instrument named"
 
 
 def test_profile_ids_are_unique():
@@ -216,3 +221,58 @@ def test_the_catalogue_page_shows_every_profile_and_its_rule():
     assert "How to run it, and what would overturn it" in html
     assert "First moves" in html
     assert f"catalog v{profiles.CATALOGUE_VERSION}" in html
+
+
+# --- per-document routing: is this one corpus or two? ---------------------
+
+
+def route_corpus(*documents: DocProfile) -> tuple[profiles.DocumentRoute, ...]:
+    return profiles.document_routes(corpus(documents=documents))
+
+
+SPARSE = DocProfile(document="data/scan.pdf", pages=10, words=50, images_per_page=6.0, lines=(3,))
+
+
+def test_a_document_goes_to_the_profile_whose_document_test_it_meets():
+    routes = route_corpus(PROSE, PLATE, SPARSE)
+
+    assert [route.outcome for route in routes] == [
+        "literature-mining",
+        "visual-search",
+        "visual-search",
+    ]
+
+
+def test_a_document_nothing_claims_is_unrouted_rather_than_rounded_up():
+    """No text, no pictures: the catalogue has no use-case that starts here."""
+    blank = DocProfile(document="data/blank.pdf", pages=4, lines=(4,))
+
+    routes = route_corpus(blank)
+
+    assert routes[0].profile is None
+    assert routes[0].outcome == "unrouted"
+
+
+def test_a_small_minority_is_an_exception_not_a_split():
+    """Five prose books and one artbook is one corpus with a routing note."""
+    routes = route_corpus(PROSE, PROSE, PROSE, PROSE, PROSE, PLATE)
+
+    advice = profiles.split_advice(routes)
+
+    assert "Not worth splitting" in advice
+    assert "17%" in advice
+
+
+def test_a_large_minority_is_worth_splitting():
+    routes = route_corpus(PROSE, PROSE, PROSE, PLATE)
+
+    advice = profiles.split_advice(routes)
+
+    assert "Worth splitting" in advice
+    assert "25%" in advice
+
+
+def test_one_shared_profile_means_no_split_at_all():
+    advice = profiles.split_advice(route_corpus(PROSE, PROSE))
+
+    assert "no split is warranted" in advice

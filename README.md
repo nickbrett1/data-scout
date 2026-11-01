@@ -213,6 +213,13 @@ Three rules make the numbers usable:
 - **Everything is cited.** No pass or fail without a ledger line, thresholds are
   printed on the page, and the catalogue version is stamped on the result.
 
+A profile is also asked **per document**, because a corpus that is 75 % one thing
+and 25 % another is two jobs, not an average. Each profile's `partial` criteria are
+its per-document tests, so every document is routed to the profile that claims it —
+or reported as `unrouted` — and the brief says whether the minority is large enough
+to be worth a second run (`SPLIT_MINORITY_SHARE`, 25 %): below that it is an
+exception to route, above it the corpus should be split and the results joined.
+
 The brief shows **every** profile, not just the winner: fitting and partial ones
 open, disqualified ones collapsed to a line ("information, not a task"), unknown
 ones naming the missing measurement. It also states what would overturn it.

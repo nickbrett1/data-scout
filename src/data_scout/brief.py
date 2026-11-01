@@ -417,7 +417,7 @@ def _fmt(value: float | None, template: str) -> str:
 def _document_count(corpus: Corpus) -> tuple[int, int | None]:
     """How many documents have a per-document reading, against how many exist.
 
-    The frame knows the corpus; `pdf_text_compare` knows only the documents it was
+    The frame knows the corpus; `partition_doc` knows only the documents it was
     run on. A table of four rows over a corpus of eight is a coverage gap, and a
     reader who is not told will read it as "the corpus has four documents".
     """
@@ -434,19 +434,29 @@ def _coverage_html(corpus: Corpus) -> str:
     return (
         f'<p class="brief-note">Only {profiled} of {total} documents have a per-document '
         f"reading: the other {missing} are not in this table and are not routed. One "
-        "<code>pdf_text_compare</code> run over them closes the gap.</p>"
+        "<code>partition_doc</code> run over them closes the gap.</p>"
     )
 
 
-def _documents_html(corpus: Corpus) -> str:
+def _documents_html(
+    corpus: Corpus, routes: Sequence[profiles.DocumentRoute] = ()
+) -> str:
     if not corpus.documents:
         return ""
+    by_name = {route.document: route for route in routes}
     rows = [
         '<table class="brief-table"><thead><tr>'
-        "<th>document</th><th>pages</th><th>words / page</th><th>images / page</th><th>reads as</th>"
+        "<th>document</th><th>pages</th><th>words / page</th><th>images / page</th>"
+        "<th>reads as</th><th>goes to</th>"
         "</tr></thead><tbody>"
     ]
     for document in corpus.documents:
+        route = by_name.get(document.name)
+        serves = (
+            f'<span class="brief-kind k-{document.kind}">{_escape(route.outcome)}</span>'
+            if route is not None
+            else ""
+        )
         rows.append(
             "<tr>"
             f'<td class="brief-doc">{_escape(document.name)}</td>'
@@ -454,6 +464,7 @@ def _documents_html(corpus: Corpus) -> str:
             f"<td>{_fmt(document.words_per_page, '{:.0f}')}</td>"
             f"<td>{_fmt(document.images_per_page, '{:.1f}')}</td>"
             f'<td><span class="brief-kind k-{document.kind}">{document.kind}</span></td>'
+            f"<td>{serves}</td>"
             "</tr>"
         )
     rows.append("</tbody></table>")
@@ -468,6 +479,8 @@ def _cell_html(cell: profiles.Cell) -> str:
     detail = ""
     if cell.state == "unknown" and cell.tool:
         detail = f'<span class="cell-task">run <code>{_escape(cell.tool)}</code></span>'
+    elif cell.state == "unknown":
+        detail = '<span class="cell-task">no instrument measures this yet</span>'
     elif cell.documents:
         detail = f'<span class="cell-task">{_escape(", ".join(cell.documents))}</span>'
     return (
@@ -594,13 +607,17 @@ def _next_measurements(corpus: Corpus, assessments: Sequence[profiles.Assessment
     profiled, total = _document_count(corpus)
     unprofiled = (
         f'<li>a per-document reading for the {total - profiled} documents not yet profiled'
-        f' <span class="brief-cite">pdf_text_compare</span></li>'
+        f' <span class="brief-cite">partition_doc</span></li>'
         if total is not None and total > profiled
         else ""
     )
     items = unprofiled + "".join(
         f'<li><code>{_escape(fact)}</code>'
-        + (f' <span class="brief-cite">{_escape(tool)}</span>' if tool else "")
+        + (
+            f' <span class="brief-cite">{_escape(tool)}</span>'
+            if tool
+            else ' <span class="brief-cite">no instrument yet</span>'
+        )
         + "</li>"
         for fact, tool in sorted(wanted.items())
     )
@@ -628,16 +645,22 @@ def body(corpus: Corpus, assessments: Sequence[profiles.Assessment] | None = Non
     parts.extend(_assessment_html(assessment) for assessment in scored)
     parts.append("</section>")
 
-    documents = _documents_html(corpus)
+    routes = profiles.document_routes(corpus)
+    documents = _documents_html(corpus, routes)
     if documents:
         profiled, total = _document_count(corpus)
         heading = f"Per document — {profiled} of {total} profiled" if total else "Per document"
+        split = (
+            f'<p class="verdict-routing">{_escape(profiles.split_advice(routes))}</p>'
+            if routes
+            else ""
+        )
         parts.append(
             f'<section class="brief-docs"><h2>{heading}</h2>'
             '<p class="brief-note">Words a page and pictures a page are the routing decision: '
             f"prose is at least {PROSE_WORDS_PER_PAGE:.0f} words a page, a plate book at least "
             f"{PLATE_IMAGES_PER_PAGE:.0f} images a page. A dash is a measurement nobody took.</p>"
-            f"{_coverage_html(corpus)}{documents}</section>"
+            f"{_coverage_html(corpus)}{split}{documents}</section>"
         )
 
     parts.append(_next_measurements(corpus, scored))
