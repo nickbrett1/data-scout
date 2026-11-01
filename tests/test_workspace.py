@@ -94,3 +94,22 @@ def test_an_unset_dataset_id_is_refused_rather_than_guessed(monkeypatch):
     monkeypatch.delenv(workspace.DATASET_ID_ENV)
     with pytest.raises(workspace.NotScoped):
         workspace.current_dataset_id()
+
+
+def test_null_tilde_and_empty_scalars_read_as_none_not_strings():
+    """A rendered ``null`` must not come back as the string ``"null"``.
+
+    The v3 frame writes an unpinned dataset's pin fields as literal ``null``.
+    If the parser returned the string, "there is no pin" would read as a pin
+    whose commit is the word ``null`` — a wrong number with a stamp.
+    """
+    assert workspace._parse_scalar("null") is None
+    assert workspace._parse_scalar("~") is None
+    assert workspace._parse_scalar("") is None
+    assert workspace._parse_scalar("  null  ") is None
+    # The quoted spellings are the same absent value.
+    assert workspace._parse_scalar('"null"') is None
+    # And real scalars are untouched.
+    assert workspace._parse_scalar("true") is True
+    assert workspace._parse_scalar("42") == 42
+    assert workspace._parse_scalar("nullish") == "nullish"

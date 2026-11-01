@@ -107,7 +107,7 @@ def test_the_frame_identity_is_unchanged_when_dvc_rewrites_its_lockfile(
     assert after.checkout.bytes == before.checkout.bytes
 
     # The exclusion is named on the frame, and the excluded scratch is counted.
-    assert set(after.exclusions) == {"git-internals", "dvc-internals"}
+    assert set(after.exclusions) == {"git-internals", "dvc-internals", "dataset-pin"}
     assert after.checkout.excluded_files == 2  # .dvc/config + .dvc/tmp/lock
 
     # Control: the whole-tree rule this replaces *does* move with the lockfile.
@@ -123,13 +123,13 @@ def test_the_exclusion_set_is_not_a_caller_option(dataset_with_payload):
 
 def test_the_schema_version_is_emitted_by_the_measurer(dataset_with_payload):
     measurement = frame.measure_frame(DATASET_ID, root=dataset_with_payload)
-    assert measurement.schema_version == frame.FRAME_SCHEMA_VERSION == 2
+    assert measurement.schema_version == frame.FRAME_SCHEMA_VERSION == 3
     # And it travels onto the ledger line without the caller supplying it.
     record = frame.identity_finding(
         measurement, dataset_id=DATASET_ID, session=1, promoted=False, retire_reason="test"
     )
-    assert record["tool_version"] == "2"
-    assert record["params"]["frame_schema"] == 2
+    assert record["tool_version"] == "3"
+    assert record["params"]["frame_schema"] == 3
 
 
 def test_the_written_frame_records_what_was_included_and_excluded(dataset_with_payload):
@@ -137,7 +137,7 @@ def test_the_written_frame_records_what_was_included_and_excluded(dataset_with_p
     path = frame.write_frame(DATASET_ID, measurement, lenses=["text", "structure"])
     text = path.read_text(encoding="utf-8")
 
-    assert "frame_schema: 2" in text
+    assert "frame_schema: 3" in text
     assert "unit: files" in text
     assert "  - git-internals" in text
     assert "  - dvc-internals" in text
@@ -145,8 +145,8 @@ def test_the_written_frame_records_what_was_included_and_excluded(dataset_with_p
     assert measurement.identity.manifest in text
 
     read_back = workspace.read_frame(DATASET_ID)
-    assert read_back.schema_version == 2
-    assert read_back.exclusions == ("git-internals", "dvc-internals")
+    assert read_back.schema_version == 3
+    assert read_back.exclusions == ("git-internals", "dvc-internals", "dataset-pin")
     assert read_back.identity.scope == measurement.identity.scope
     assert read_back.identity.files == measurement.identity.files
     assert read_back.identity.bytes == measurement.identity.bytes
@@ -204,7 +204,7 @@ def _write_frame_text(text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def test_a_v1_frame_and_a_v2_frame_are_not_comparable(dataset_with_payload):
+def test_a_v1_frame_and_a_v3_frame_are_not_comparable(dataset_with_payload):
     _write_frame_text(V1_FRAME)
     v1 = workspace.read_frame(DATASET_ID)
     assert v1.schema_version == 1
@@ -212,17 +212,17 @@ def test_a_v1_frame_and_a_v2_frame_are_not_comparable(dataset_with_payload):
 
     measurement = frame.measure_frame(DATASET_ID, root=dataset_with_payload)
     _write_frame_text(frame.render_frame(measurement))
-    v2 = workspace.read_frame(DATASET_ID)
-    assert v2.schema_version == 2
+    v3 = workspace.read_frame(DATASET_ID)
+    assert v3.schema_version == 3
 
-    result = frame.compare_frames(v1, v2)
+    result = frame.compare_frames(v1, v3)
     assert result.comparable is False
     assert result.delta is None
     assert "different frame rules" in result.reason
-    assert "v1" in result.reason and "v2" in result.reason
+    assert "v1" in result.reason and "v3" in result.reason
 
 
-def test_two_v2_frames_are_comparable_and_report_only_the_identity_delta(
+def test_two_v3_frames_are_comparable_and_report_only_the_identity_delta(
     dataset_with_payload,
 ):
     root = dataset_with_payload
@@ -324,3 +324,135 @@ def test_ledger_frame_schemas_reports_the_set_with_history_visible():
 def test_ledger_frame_schemas_is_empty_when_no_frame_line_is_present():
     """Empty is "no line", which is not "schema zero"."""
     assert frame.ledger_frame_schemas(['{"tool": "file_census"}']) == []
+
+
+# --------------------------------------------------------------------------
+# 4. append-once at promotion — frame lines only, and keyed on the pin
+# --------------------------------------------------------------------------
+
+PIN_A = "a" * 40
+PIN_B = "b" * 40
+
+
+def _frame_identity_line(
+    *,
+    ts: str = "2026-11-01T00:00:00Z",
+    commit: str | None = PIN_A,
+    value: int = 934_843_620,
+    checkout_files: int = 12,
+) -> str:
+    """A frame identity line shaped exactly as ``identity_finding`` writes one."""
+    return json.dumps(
+        {
+            "ts": ts,
+            "dataset_id": DATASET_ID,
+            "dataset_commit": commit,
+            "session": 1,
+            "unit": "files",
+            "tool": "frame",
+            "tool_version": "3",
+            "params": {
+                "frame_schema": 3,
+                "identity_scope": "data",
+                "identity_files": 8,
+                "checkout_files": checkout_files,
+                "checkout_bytes": 934_848_934,
+                "dataset_pinned": commit is not None,
+                "dataset_commit": commit,
+                "dataset_manifest_hash": "cab6e809cb982eba178a0f3a631e16d6.dir",
+                "dataset_files": 8,
+                "dataset_bytes": 934_843_620,
+            },
+            "value": value,
+            "n": 8,
+            "promoted": False,
+            "retire_reason": "one-off: a frame line fixture",
+        },
+        sort_keys=True,
+    )
+
+
+def _tool_line(*, ts: str = "2026-11-01T00:00:00Z", value: float = 0.9) -> str:
+    return json.dumps(
+        {
+            "ts": ts,
+            "dataset_id": DATASET_ID,
+            "session": 1,
+            "unit": "file",
+            "tool": "file_census",
+            "tool_version": "1",
+            "params": {"per_chars": 1000},
+            "value": value,
+            "n": 2,
+            "promoted": False,
+            "retire_reason": "one-off: a non-frame fixture",
+        },
+        sort_keys=True,
+    )
+
+
+def test_an_unchanged_frame_appends_once_across_ts():
+    """(a) Same content, different ts, same pin → the second append is skipped."""
+    first = _frame_identity_line(ts="2026-11-01T00:00:00Z")
+    second = _frame_identity_line(ts="2026-11-01T01:02:03Z")
+
+    keep, skipped = frame.promote_once([second], [first])
+    assert keep == []
+    assert skipped == [second]
+
+
+def test_a_repin_appends_even_when_the_normalized_content_is_identical():
+    """(b) The trap: same content, same ts, different dataset_commit → ACCEPTED.
+
+    ``dataset_commit`` is dropped from ``normalized_line`` by §3.5a, so keying
+    on that would suppress the one line that records the bytes moving. This
+    test is what proves the dedupe key is not that key.
+    """
+    first = _frame_identity_line(ts="2026-11-01T00:00:00Z", commit=PIN_A)
+    repinned = _frame_identity_line(ts="2026-11-01T00:00:00Z", commit=PIN_B)
+
+    # The trap, made concrete: §3.5a's reproduction key drops the *top-level*
+    # dataset_commit, so a line whose pin lives only there normalizes
+    # identically across a re-pin. (The current frame writer also puts the pin
+    # in ``params``, which is exactly the kind of writer detail the dedupe key
+    # must not depend on.)
+    from data_scout.ledger import normalized_line
+
+    def top_level_only(line: str) -> str:
+        data = json.loads(line)
+        for name in frame.FRAME_PIN_FIELDS:
+            data["params"].pop(name, None)
+        return json.dumps(data, sort_keys=True)
+
+    assert normalized_line(top_level_only(first)) == normalized_line(
+        top_level_only(repinned)
+    )
+
+    # The append-once key must not fall into it.
+    assert frame.frame_dedup_key(first) != frame.frame_dedup_key(repinned)
+
+    keep, skipped = frame.promote_once([repinned], [first])
+    assert keep == [repinned]
+    assert skipped == []
+
+
+def test_a_non_frame_tool_appends_twice_with_identical_content():
+    """(c) The rule is frame-only: two identical findings are two events."""
+    first = _tool_line()
+    second = _tool_line(ts="2026-11-01T01:02:03Z")
+
+    keep, skipped = frame.promote_once([second], [first])
+    assert keep == [second]
+    assert skipped == []
+
+
+def test_a_genuine_remeasure_still_appends_under_the_same_pin():
+    """(d) A changed identity/measurement field is a new measurement."""
+    first = _frame_identity_line(value=934_843_620, checkout_files=12)
+    remeasured = _frame_identity_line(
+        ts="2026-11-01T00:00:00Z", value=934_843_621, checkout_files=13
+    )
+
+    keep, skipped = frame.promote_once([remeasured], [first])
+    assert keep == [remeasured]
+    assert skipped == []

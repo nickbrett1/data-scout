@@ -8,6 +8,7 @@ must fail — so a future tool that forgets is caught before a session, not afte
 from __future__ import annotations
 
 import ast
+import json
 import os
 import shutil
 from pathlib import Path
@@ -155,3 +156,48 @@ def test_inventory_says_no_frame_when_only_the_dataset_has_one(dataset):
     (dataset / workspace.FRAME_FILENAME).write_text(f"# {DATASET_ID}\n", encoding="utf-8")
     summary = inventory.summarize(DATASET_ID, dataset)
     assert summary.frame is False
+
+
+# ---- the pin sits under the read-only root too ----------------------------
+
+
+PIN = {
+    "pin_schema": 1,
+    "dataset_id": DATASET_ID,
+    "dataset_commit": "84ba1903af58166a9e92dc7687e6893863e732e9",
+    "dataset_manifest_hash": "cab6e809cb982eba178a0f3a631e16d6.dir",
+    "dataset_files": 2,
+    "dataset_bytes": 10,
+    "tag": DATASET_ID,
+    "dvc_version": "3.67.1",
+    "written_at": "2026-11-01T11:53:57Z",
+}
+
+
+def test_the_pin_is_read_from_the_dataset_root_without_a_write_handle(dataset):
+    """``pin.json`` is read beside the payload, and reading it writes nothing.
+
+    The pin is the host's claim about the bytes, so it lives with the bytes.
+    This puts one on a read-only dataset and asserts both that the reader finds
+    it and that its bytes are untouched afterwards — no ``open(..., 'a')``
+    sneaks in behind the reader.
+    """
+    pin = dataset / workspace.PIN_FILENAME
+    pin.write_text(json.dumps(PIN), encoding="utf-8")
+    before = pin.read_bytes()
+    pin.chmod(0o444)
+    try:
+        assert workspace.pin_path(DATASET_ID) == pin
+        result = workspace.read_pin(DATASET_ID)
+        assert result is not None
+        assert result.dataset_commit == PIN["dataset_commit"]
+        assert result.dataset_files == 2
+        assert pin.read_bytes() == before
+    finally:
+        pin.chmod(0o644)
+
+
+def test_an_absent_pin_is_none_not_a_write(dataset):
+    """No pin file is a normal state (an unversioned dataset), not an error."""
+    assert workspace.read_pin(DATASET_ID) is None
+    assert not (dataset / workspace.PIN_FILENAME).exists()

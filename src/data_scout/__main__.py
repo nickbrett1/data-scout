@@ -139,6 +139,21 @@ def index_payload() -> dict[str, Any]:
         record.setdefault("names", [])
         record.setdefault("findings_lines", 0)
         record.setdefault("workspace", False)
+        # The pin, read through read_pin — not read_frame. A dataset may be
+        # pinned and unprofiled, and that combination must be visible rather
+        # than raising DatasetUnprofiled. A corrupt pin degrades to pin_error
+        # for this one entry: the index is a browse surface and must stay alive
+        # when one dataset's pin cannot be read, while the frame path stays
+        # strict.
+        try:
+            pin = workspace.read_pin(dataset_id)
+        except workspace.PinUnreadable as exc:
+            record["pinned"] = False
+            record["dataset_commit"] = None
+            record["pin_error"] = str(exc)
+        else:
+            record["pinned"] = pin is not None
+            record["dataset_commit"] = pin.dataset_commit if pin else None
         # "Scouted" means something has begun: a frame, a workspace or a
         # finding. Counting files is not scouting.
         record["scouted"] = bool(

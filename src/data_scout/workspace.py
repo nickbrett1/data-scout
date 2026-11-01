@@ -30,6 +30,7 @@ creates it under that tree.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass, field
@@ -83,6 +84,17 @@ class DatasetUnprofiled(WorkspaceError):
 
 class NotScoped(WorkspaceError):
     """No dataset id was supplied and none is in the environment."""
+
+
+class PinUnreadable(WorkspaceError):
+    """A pin file exists but cannot be understood. Not the same fact as no pin.
+
+    An absent pin is ``None`` — a dataset may be unversioned by owner decision.
+    A pin that is present and malformed, missing a key, of the wrong type,
+    written under an unknown ``pin_schema``, or naming a different dataset is
+    this error. Conflating the two is how a corrupt store silently reads as an
+    unpinned one.
+    """
 
 
 def datasets_root() -> Path:
@@ -140,6 +152,142 @@ def _visible_dirs(root: Path) -> list[str]:
 
 
 # --------------------------------------------------------------------------
+# pin.json — the host's claim about the payload, read only here
+# --------------------------------------------------------------------------
+
+#: The pin file's name, at ``<datasets_root>/<dataset-id>/pin.json``. Written by
+#: the host (``/srv/bin/datasets pin``); never by anything in this image.
+PIN_FILENAME = "pin.json"
+
+#: The only pin format this reader understands. Unknown → :class:`PinUnreadable`.
+PIN_SCHEMA = 1
+
+
+@dataclass(frozen=True)
+class DatasetPin:
+    """A pin read from disk: which bytes the host says this dataset is.
+
+    ``dataset_files`` / ``dataset_bytes`` are load-bearing, not decoration: the
+    frame measurement cross-checks them so the image never records a pin it did
+    not verify against the payload it just measured. ``tag``, ``dvc_version``
+    and ``written_at`` are provenance for a human; nothing reads them
+    programmatically.
+    """
+
+    dataset_id: str
+    dataset_commit: str
+    dataset_manifest_hash: str
+    dataset_files: int
+    dataset_bytes: int
+    tag: str | None = None
+    dvc_version: str | None = None
+    written_at: str | None = None
+
+
+def pin_path(dataset_id: str) -> Path:
+    """``<datasets_root>/<dataset_id>/pin.json``. Beside :func:`dataset_path`.
+
+    Unlike :func:`dataset_path`, this does **not** require the dataset to exist:
+    a pin check is meaningful precisely when a mount is misconfigured, and
+    "there is no pin at this path" must be answerable without first proving the
+    dataset is present.
+    """
+    return datasets_root() / validate_dataset_id(dataset_id) / PIN_FILENAME
+
+
+def read_pin(dataset_id: str, root: Path | None = None) -> DatasetPin | None:
+    """The pin recorded for this dataset, or ``None`` if none was ever recorded.
+
+    ``root`` defaults to :func:`datasets_root`. ``measure_frame`` passes its own
+    root so a fixture pin is visible beside a fixture payload; that is the only
+    reason the parameter exists. Reading is one file in one direction: no git,
+    no subprocess, no DVC.
+
+    Rules, each of which is a test: an absent file is ``None`` (an unversioned
+    dataset is legitimate); a present file that is malformed, missing a required
+    key, of the wrong type, under an unknown ``pin_schema``, or naming a
+    different ``dataset_id`` raises :class:`PinUnreadable` naming the path and
+    the problem. This function never writes.
+    """
+    dataset_id = validate_dataset_id(dataset_id)
+    base = Path(root) if root is not None else datasets_root()
+    path = base / dataset_id / PIN_FILENAME
+    if not path.is_file():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise PinUnreadable(f"{path}: pin file could not be read ({exc})") from exc
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise PinUnreadable(f"{path}: pin file is not valid JSON ({exc})") from exc
+    if not isinstance(data, dict):
+        raise PinUnreadable(
+            f"{path}: pin file must be a JSON object, got {type(data).__name__}"
+        )
+
+    schema = data.get("pin_schema")
+    if isinstance(schema, bool) or not isinstance(schema, int):
+        raise PinUnreadable(
+            f"{path}: pin_schema must be an integer, got {schema!r}"
+        )
+    if schema != PIN_SCHEMA:
+        raise PinUnreadable(
+            f"{path}: pin_schema {schema} is not one this reader understands "
+            f"(known: {PIN_SCHEMA})"
+        )
+
+    required = (
+        "dataset_id",
+        "dataset_commit",
+        "dataset_manifest_hash",
+        "dataset_files",
+        "dataset_bytes",
+    )
+    missing = [key for key in required if key not in data]
+    if missing:
+        raise PinUnreadable(
+            f"{path}: pin file is missing required keys: {', '.join(missing)}"
+        )
+
+    for key in ("dataset_id", "dataset_commit", "dataset_manifest_hash"):
+        if not isinstance(data[key], str) or not data[key]:
+            raise PinUnreadable(
+                f"{path}: {key} must be a non-empty string, got {data[key]!r}"
+            )
+    for key in ("dataset_files", "dataset_bytes"):
+        value = data[key]
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise PinUnreadable(
+                f"{path}: {key} must be an integer, got {value!r}"
+            )
+    for key in ("tag", "dvc_version", "written_at"):
+        value = data.get(key)
+        if value is not None and not isinstance(value, str):
+            raise PinUnreadable(
+                f"{path}: {key} must be a string or null, got {value!r}"
+            )
+
+    if data["dataset_id"] != dataset_id:
+        raise PinUnreadable(
+            f"{path}: pin names dataset {data['dataset_id']!r} but the dataset "
+            f"was addressed as {dataset_id!r}; the pin describes different bytes"
+        )
+
+    return DatasetPin(
+        dataset_id=data["dataset_id"],
+        dataset_commit=data["dataset_commit"],
+        dataset_manifest_hash=data["dataset_manifest_hash"],
+        dataset_files=data["dataset_files"],
+        dataset_bytes=data["dataset_bytes"],
+        tag=data.get("tag"),
+        dvc_version=data.get("dvc_version"),
+        written_at=data.get("written_at"),
+    )
+
+
+# --------------------------------------------------------------------------
 # frame.md
 # --------------------------------------------------------------------------
 
@@ -152,6 +300,23 @@ class FrameIdentity:
     files: int
     bytes: int
     manifest: str
+
+
+@dataclass(frozen=True)
+class FramePin:
+    """The pin as a v3 frame records it, read back without a datasets mount.
+
+    Deliberately **not** :class:`DatasetPin`: reading a frame is a workspace
+    read, and must not require the read-only datasets root to be mounted. A
+    frame written for an unversioned dataset records ``pinned=False`` with null
+    fields — "unpinned" is a record, not a gap.
+    """
+
+    pinned: bool
+    dataset_commit: str | None = None
+    dataset_manifest_hash: str | None = None
+    dataset_files: int | None = None
+    dataset_bytes: int | None = None
 
 
 @dataclass(frozen=True)
@@ -180,6 +345,7 @@ class Frame:
     exclusions: tuple[str, ...] = ()
     identity: FrameIdentity | None = None
     checkout: FrameIdentity | None = None
+    pin: FramePin | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -188,7 +354,17 @@ _HEADING_RE = re.compile(r"^#\s+(.+)$", re.MULTILINE)
 
 
 def _parse_scalar(value: str) -> Any:
+    """One frontmatter scalar: bool, int, null, or the string as written.
+
+    ``null``, ``~`` and an empty value are YAML's three spellings of *absent*,
+    and they parse to ``None``. They are not the strings ``"null"`` / ``"~"``:
+    a frame renders an unpinned dataset's fields as literal ``null`` (§3.2), and
+    reading that back as a string would turn "there is no pin" into a pin whose
+    commit is the word "null".
+    """
     text = value.strip().strip('"').strip("'")
+    if not text or text.lower() in {"null", "~"}:
+        return None
     if text.lower() in {"true", "false"}:
         return text.lower() == "true"
     if re.fullmatch(r"-?\d+", text):
@@ -303,6 +479,11 @@ def read_frame(dataset_id: str) -> Frame:
         "checkout_bytes",
         "checkout_manifest",
         "manifest_rule",
+        "dataset_pinned",
+        "dataset_commit",
+        "dataset_manifest_hash",
+        "dataset_files",
+        "dataset_bytes",
     }
     return Frame(
         dataset_id=declared,
@@ -317,6 +498,7 @@ def read_frame(dataset_id: str) -> Frame:
         exclusions=tuple(str(item) for item in declared_exclusions),
         identity=_frame_identity(meta, "identity"),
         checkout=_frame_identity(meta, "checkout"),
+        pin=_frame_pin(meta, frame_file),
         extra={k: v for k, v in meta.items() if k not in known},
     )
 
@@ -333,6 +515,53 @@ def _frame_identity(meta: dict[str, Any], prefix: str) -> FrameIdentity | None:
         files=files if isinstance(files, int) and not isinstance(files, bool) else 0,
         bytes=size if isinstance(size, int) and not isinstance(size, bool) else 0,
         manifest=str(meta.get(f"{prefix}_manifest") or ""),
+    )
+
+
+def _frame_pin(meta: dict[str, Any], frame_file: Path) -> FramePin | None:
+    """Read the v3 frame's pin block, or ``None`` for a frame that has none.
+
+    A v1/v2 frame carries no pin keys, and that is a real difference: it was
+    measured before the pin existed. A v3 frame **always** writes
+    ``dataset_pinned`` so that "unpinned" is a record rather than a gap.
+    """
+    if "dataset_pinned" not in meta:
+        return None
+    pinned = meta.get("dataset_pinned")
+    if not isinstance(pinned, bool):
+        raise WorkspaceError(
+            f"{frame_file} declares dataset_pinned {pinned!r}, which is not a "
+            "boolean; a frame cannot say half of whether it was pinned"
+        )
+    commit = meta.get("dataset_commit")
+    manifest = meta.get("dataset_manifest_hash")
+    files = meta.get("dataset_files")
+    size = meta.get("dataset_bytes")
+    for key, value in (
+        ("dataset_commit", commit),
+        ("dataset_manifest_hash", manifest),
+    ):
+        if value is not None and not isinstance(value, str):
+            raise WorkspaceError(
+                f"{frame_file} declares {key} {value!r}, which is not a string or null"
+            )
+    for key, value in (("dataset_files", files), ("dataset_bytes", size)):
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+            raise WorkspaceError(
+                f"{frame_file} declares {key} {value!r}, which is not an integer or null"
+            )
+    if pinned and (not commit or files is None or size is None):
+        raise WorkspaceError(
+            f"{frame_file} says dataset_pinned: true but has no complete pin "
+            "(dataset_commit, dataset_files and dataset_bytes are required when "
+            "pinned); refusing to read a pin that does not name its bytes"
+        )
+    return FramePin(
+        pinned=pinned,
+        dataset_commit=commit,
+        dataset_manifest_hash=manifest,
+        dataset_files=files,
+        dataset_bytes=size,
     )
 
 
