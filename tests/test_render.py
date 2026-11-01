@@ -527,3 +527,138 @@ def test_the_notebook_rendition_is_one_document_not_two(dataset_workspace, capsy
     # nbconvert's output rendering survives; ours is the last sheet in <head>.
     assert "jp-Notebook" in html
     assert html.rindex("--measure") < html.index("</head>")
+
+
+# --------------------------------------------------------------------------
+# the report is the ledger, with the prose hung off it
+# --------------------------------------------------------------------------
+
+REPORT_MARKDOWN = """# vg-books-2026-10
+
+Six PDFs, mostly art books.
+
+<!-- finding: 2 -->
+**1,778 pages across six documents.** The page count is the only size measure
+that survives the encryption.
+
+<!-- finding: 3 -->
+Three PDFs are locked *and* have no extractable text layer.
+"""
+
+
+def _findings():
+    from data_scout.ledger import Finding
+
+    return [
+        Finding(
+            dataset_id="vg-books-2026-10",
+            session=1,
+            unit="files",
+            tool="file_census",
+            tool_version="1",
+            params={"path": "/datasets/vg-books-2026-10"},
+            value=56,
+            n=56,
+            promoted=True,
+            script="data_scout.tools.file_census",
+        ),
+        Finding(
+            dataset_id="vg-books-2026-10",
+            session=1,
+            unit="pages",
+            tool="pdf_forensics",
+            tool_version="1",
+            params={"path": "/datasets/vg-books-2026-10/data", "aggregate": "pages"},
+            value=1778,
+            n=6,
+            promoted=False,
+            retire_reason="one-off: the six PDFs are the whole dataset",
+        ),
+        Finding(
+            dataset_id="vg-books-2026-10",
+            session=1,
+            unit="PDFs",
+            tool="pdf_forensics",
+            tool_version="1",
+            params={"attribute": "pdfinfo Encrypted: yes"},
+            value=3,
+            n=6,
+            promoted=False,
+            retire_reason="one-off: a property of this checkout",
+        ),
+    ]
+
+
+def test_a_report_is_the_ledger_with_the_prose_hung_off_it():
+    html = render.render_markdown(REPORT_MARKDOWN, title="t", findings=_findings())
+
+    assert html.count('<details class="finding"') == 3
+    # A row is scannable: number, instrument, value, unit, n, session.
+    assert '<span class="f-value">1,778</span>' in html
+    assert '<span class="f-unit">pages</span>' in html
+    assert "3 findings · 1 promoted · 2 retired" in html
+    # The commentary is inside the row it names, not stranded at the end.
+    card_two = html[html.index('id="f2"') : html.index('id="f3"')]
+    assert "only size measure" in card_two
+    assert "only size measure" not in html[html.index('id="f3"') :]
+    # The marker is an instruction, never visible text.
+    assert "<!-- finding:" not in html
+    # A line with no prose says so rather than looking like a bug.
+    assert "No commentary recorded" in html
+    # The lede survives above the table.
+    assert "Six PDFs, mostly art books." in html
+    assert html.index("Six PDFs") < html.index('<section class="findings"')
+
+
+def test_a_report_with_no_markers_still_gets_the_table_after_its_lede():
+    """Nothing to attach prose to is not a reason to lose the ledger."""
+    html = render.render_markdown("# t\n\nProse only.\n\nMore prose.\n", title="t", findings=_findings())
+    assert '<section class="findings"' in html
+    assert "Prose only." in html
+    # The opening paragraph is the intro; the table follows it, before the rest.
+    assert html.index("Prose only.") < html.index('<section class="findings"')
+    assert html.index('<section class="findings"') < html.index("More prose.")
+
+
+def test_commentary_naming_a_line_the_ledger_does_not_have_is_shown_not_swallowed():
+    markdown = "# t\n\nlede\n\n<!-- finding: 9 -->\n\nThis refers to nothing.\n"
+    html = render.render_markdown(markdown, title="t", findings=_findings())
+
+    assert "Commentary with no ledger line" in html
+    assert "This refers to nothing." in html
+    assert "Finding 9" in html
+
+
+def test_commentary_without_a_ledger_is_still_rendered():
+    """A report previewed outside a render must not lose its prose."""
+    html = render.render_markdown(REPORT_MARKDOWN, title="t")
+    assert '<details class="finding"' not in html
+    assert "only size measure" in html
+    assert "Finding 2" in html
+
+
+def test_split_commentary_keeps_blocks_apart_and_allows_repeats():
+    lede, blocks = render.split_commentary(
+        "lede\n\n<!-- finding: 2 -->\nfirst\n\n<!-- finding: 2 -->\nsecond\n\n<!-- finding: 1 -->\none\n"
+    )
+    assert lede.strip() == "lede"
+    assert blocks[2] == "first\n\nsecond"
+    assert blocks[1] == "one"
+
+
+def test_the_render_feeds_the_ledger_into_the_report(dataset_workspace, capsys):
+    """End to end: `report-render` must pass the lines, not just the markdown."""
+    second = APPEND_CELL.replace('"value": 0.9', '"value": 0.5').replace(
+        '"params": {"per_chars": 1000}', '"params": {"per_chars": 2000}'
+    )
+    build_session(
+        dataset_workspace,
+        cells=[APPEND_CELL, second],
+        report_text="# vg books\n\nSix PDFs.\n\n<!-- finding: 1 -->\n\nFirst line.\n",
+    )
+    assert render.main([DATASET_ID, "--quiet"]) == 0, capsys.readouterr().err
+
+    html = (dataset_workspace / "report-2026-10-26.html").read_text(encoding="utf-8")
+    assert html.count('<details class="finding"') == 2
+    assert "First line." in html
+    assert "2 findings · 0 promoted" in html

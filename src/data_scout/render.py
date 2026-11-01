@@ -24,8 +24,11 @@ The six steps, in order (``data-scout-convention`` §4.3):
    cell or a non-reproducing re-execution leaves ``findings.jsonl`` byte-identical
    and exits non-zero; only a run that passes both gates appends its lines,
    exactly once and byte for byte.
-5. **Render** ``report-*.md`` and ``session-N.ipynb`` to HTML: one stylesheet,
-   no browser engine, no PDF (a stated non-goal).
+5. **Render** ``session-N.ipynb`` to HTML and ``report-*.md`` to a report
+   anchored on the ledger: ``findings.jsonl`` becomes a table of scannable rows
+   (number, instrument, value, unit, ``n``, session) and each row opens into the
+   commentary the markdown attaches with ``<!-- finding: N -->``. One
+   stylesheet, no browser engine, no PDF (a stated non-goal).
 6. **Print each cell's output and any error**, so the agent can iterate.
 
 Rendered artifacts are **not** byte-reproducible and must not be tested as if
@@ -239,7 +242,6 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
 {nav}
 <div class="data-scout-meta">{meta}</div>
-{toc}
 {body}
 </body>
 </html>
@@ -306,15 +308,200 @@ def _contents(sections: list[tuple[int, str, str]]) -> str:
     )
 
 
-def render_markdown(markdown: str, *, title: str, meta: str = "") -> str:
-    """``report-*.md`` -> standalone HTML. No browser engine, no PDF."""
+#: A report is a table of the ledger with the prose hung off it. The marker
+#: below starts the commentary for one finding; the number is the finding's
+#: 1-based line in ``findings.jsonl``, which is also the row number a reader
+#: sees. Everything before the first marker is the report's lede.
+#:
+#:     # vg-books-2026-10
+#:
+#:     Six PDFs. The frame says what the checkout is; this says what is in it.
+#:
+#:     <!-- finding: 13 -->
+#:
+#:     Three PDFs are locked, and the same three have text layers that extract
+#:     to nothing. That pairing is the finding...
+#:
+#: A report with no markers still renders — the table comes first and its prose
+#: follows — so an older report is not a broken one.
+FINDING_MARKER = re.compile(r"^[ \t]*<!--[ \t]*finding:[ \t]*(\d+)[ \t]*-->[ \t]*$", re.MULTILINE)
+
+#: The params worth showing in the row itself, in this order. Everything else
+#: is in the row's detail: the row answers "what is this number", the detail
+#: answers "how was it measured".
+_ROW_PARAMS = ("path", "document", "measure", "attribute", "aggregate", "probe", "suffix")
+
+
+def split_commentary(markdown: str) -> tuple[str, dict[int, str]]:
+    """The lede, and the commentary for each finding number.
+
+    A block runs from its marker to the next one, so a finding's prose can be
+    anything markdown can express — including its own headings and tables —
+    without any nesting rule to get wrong.
+    """
+    markers = list(FINDING_MARKER.finditer(markdown))
+    if not markers:
+        return markdown, {}
+    lede = markdown[: markers[0].start()]
+    blocks: dict[int, str] = {}
+    for position, marker in enumerate(markers):
+        end = markers[position + 1].start() if position + 1 < len(markers) else len(markdown)
+        number = int(marker.group(1))
+        text = markdown[marker.end() : end].strip()
+        if not text:
+            continue
+        blocks[number] = f"{blocks[number]}\n\n{text}" if number in blocks else text
+    return lede, blocks
+
+
+def _format_value(value: Any) -> str:
+    if isinstance(value, bool):  # bool is an int; it is never a measurement
+        return str(value)
+    if isinstance(value, int):
+        return f"{value:,}"
+    if isinstance(value, float):
+        return f"{value:,.6g}"
+    return str(value)
+
+
+def _shorten(key: str, value: Any) -> str:
+    """A row is scanned, not read: a 40-character absolute path is not a label."""
+    text = str(value)
+    if key == "path":
+        parts = [part for part in text.split("/") if part]
+        if len(parts) > 2:
+            text = "…/" + "/".join(parts[-2:])
+    return text if len(text) <= 34 else text[:33] + "…"
+
+
+def _row_params(params: dict[str, Any]) -> str:
+    keys = [key for key in _ROW_PARAMS if key in params]
+    keys += [key for key in sorted(params) if key not in keys]
+    return " · ".join(f"{key}={_shorten(key, params[key])}" for key in keys[:2])
+
+
+def _detail_rows(finding: Any) -> list[str]:
+    """Everything the row does not show: parameters, provenance, the decision."""
+    parts = ['<dl class="f-facts">']
+    parts.append(
+        f'<dt>measured</dt><dd><code>{_escape(finding.tool)}</code> '
+        f'v{_escape(finding.tool_version)} · session {finding.session} · '
+        f'{_escape(finding.ts.isoformat().replace("+00:00", "Z"))}</dd>'
+    )
+    if finding.params:
+        rendered = ", ".join(
+            f"{_escape(str(key))}={_escape(str(value))}" for key, value in sorted(finding.params.items())
+        )
+        parts.append(f"<dt>params</dt><dd><code>{rendered}</code></dd>")
+    if finding.dataset_commit:
+        parts.append(
+            f'<dt>pin</dt><dd><code>{_escape(finding.dataset_commit[:12])}</code></dd>'
+        )
+    if finding.promoted:
+        parts.append(
+            f'<dt>decision</dt><dd>promoted to <code>{_escape(finding.script or "")}</code></dd>'
+        )
+    else:
+        parts.append(
+            f'<dt>decision</dt><dd>not promoted — {_escape(finding.retire_reason or "")}</dd>'
+        )
+    parts.append("</dl>")
+    return parts
+
+
+def _finding_html(number: int, finding: Any, commentary: str, render_block: Any) -> str:
+    """One row of the table: a line you can scan, that opens into the prose."""
+    what = _row_params(finding.params)
+    summary = [
+        f'<span class="f-no">{number}</span>',
+        '<span class="f-tool">'
+        f"<code>{_escape(finding.tool)}</code>"
+        + (f'<span class="f-what">{_escape(what)}</span>' if what else "")
+        + "</span>",
+        f'<span class="f-value">{_escape(_format_value(finding.value))}</span>',
+        f'<span class="f-unit">{_escape(finding.unit)}</span>',
+        f'<span class="f-n">n={finding.n:,}</span>',
+        f'<span class="f-session">s{finding.session}</span>',
+    ]
+    body = _detail_rows(finding)
+    if commentary:
+        body.append(f'<div class="finding-note">{render_block(commentary)}</div>')
+    else:
+        body.append('<p class="finding-none">No commentary recorded for this line.</p>')
+    return (
+        f'<details class="finding" id="f{number}">'
+        f'<summary>{"".join(summary)}</summary>'
+        f'<div class="f-body">{"".join(body)}</div>'
+        "</details>"
+    )
+
+
+def _findings_html(findings: Sequence[Any], commentary: dict[int, str], render_block: Any) -> str:
+    """The table itself, with a one-line count of what the ledger holds."""
+    promoted = sum(1 for finding in findings if finding.promoted)
+    tools = sorted({finding.tool for finding in findings})
+    header = (
+        '<div class="findings-head" aria-hidden="true">'
+        '<span class="f-no">#</span><span class="f-tool">finding</span>'
+        '<span class="f-value">value</span><span class="f-unit">unit</span>'
+        '<span class="f-n">n</span><span class="f-session">s</span></div>'
+    )
+    rows = "".join(
+        _finding_html(number, finding, commentary.get(number, ""), render_block)
+        for number, finding in enumerate(findings, start=1)
+    )
+    summary = (
+        f'<p class="findings-count">{len(findings)} finding'
+        f'{"" if len(findings) == 1 else "s"} · {promoted} promoted · '
+        f'{len(findings) - promoted} retired · {_escape(", ".join(tools))}</p>'
+    )
+    return (
+        '<section class="findings" aria-label="Findings">'
+        f"{summary}{header}{rows}</section>"
+    )
+
+
+def _render_parser() -> Any:
     from markdown_it import MarkdownIt
 
     parser = MarkdownIt("commonmark", {"html": False, "linkify": False})
     parser.enable("table")
     parser.enable("strikethrough")
+    return parser
 
-    ids, sections = _structure(parser.parse(markdown))
+
+def _after_lede(body: str, insertion: str) -> str:
+    """Where the table goes: after the title and its opening paragraph.
+
+    Not immediately after ``</h1>`` — an intro sentence belongs above the
+    ledger, or the table reads as the report and the prose as a footnote.
+    """
+    title_end = body.find("</h1>")
+    if title_end == -1:
+        return f"{insertion}\n{body}"
+    end = title_end + len("</h1>")
+    paragraph = body.find("</p>", end)
+    if paragraph != -1 and "<h2" not in body[end:paragraph]:
+        end = paragraph + len("</p>")
+    return body[:end] + "\n" + insertion + body[end:]
+
+
+def render_markdown(
+    markdown: str, *, title: str, meta: str = "", findings: Sequence[Any] = ()
+) -> str:
+    """``report-*.md`` -> standalone HTML. No browser engine, no PDF.
+
+    The report is anchored on the ledger: ``findings`` — the lines as recorded —
+    become a table of rows you can scan, and each row opens into the commentary
+    the markdown attaches to it with ``<!-- finding: N -->``. Prose that is not
+    attached to a line is still rendered, under a heading that says so, because
+    a report must not be able to lose text by being restructured.
+    """
+    lede, commentary = split_commentary(markdown)
+    attached = dict(commentary)
+
+    parser = _render_parser()
+    ids, sections = _structure(parser.parse(lede))
 
     def heading_open(
         _renderer: Any, tokens: Sequence[Any], index: int, *_rest: Any
@@ -323,19 +510,45 @@ def render_markdown(markdown: str, *, title: str, meta: str = "") -> str:
         return f'<{token.tag} id="{_escape(ids.get(index, "section"))}">'
 
     parser.add_render_rule("heading_open", heading_open)
-    body = parser.render(markdown)
+    body = parser.render(lede)
+
+    note_parser = _render_parser()
+
+    def render_block(text: str) -> str:
+        return note_parser.render(text)
+
+    extras: list[str] = []
+    if commentary and not findings:
+        # No ledger to anchor to: keep every byte of the commentary, in order.
+        extras.extend(
+            f'<h3 id="finding-{number}">Finding {number}</h3>{render_block(text)}'
+            for number, text in sorted(commentary.items())
+        )
+    elif findings:
+        extras.append(_findings_html(findings, attached, render_block))
+        orphans = {number: text for number, text in commentary.items() if number not in range(1, len(findings) + 1)}
+        if orphans:
+            extras.append('<h2 id="unattached">Commentary with no ledger line</h2>')
+            extras.append(
+                '<p class="muted">These blocks name a finding number the ledger '
+                "does not have. Nothing is dropped; the number is wrong.</p>"
+            )
+            extras.extend(
+                f'<h3 id="unattached-{number}">Finding {number}</h3>{render_block(text)}'
+                for number, text in sorted(orphans.items())
+            )
+
     toc = _contents(sections)
-    if toc and "</h1>" in body:
-        # After the title, not above it: the contents is an aid to reading the
-        # report, not a preface that pushes the report down the page.
-        body = body.replace("</h1>", f"</h1>\n{toc}", 1)
-        toc = ""
+    if toc:
+        extras.insert(0, toc)
+    if extras:
+        body = _after_lede(body, "".join(extras))
+
     return _HTML_TEMPLATE.format(
         title=_escape(title),
         css=stylesheet(),
         meta=_escape(meta),
         nav=NAV_HTML,
-        toc=toc,
         body=body,
     )
 
@@ -629,6 +842,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     report_path.read_text(encoding="utf-8"),
                     title=report_path.stem,
                     meta=_meta_line(dataset_id, session, report_path.name),
+                    # The ledger is the report's spine: every row is a line as
+                    # recorded, and the markdown hangs commentary off it.
+                    findings=ledger.findings(),
                 ),
                 encoding="utf-8",
             )
