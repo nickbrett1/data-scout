@@ -347,7 +347,8 @@ def read(findings: Sequence[Any]) -> Corpus:
             Fact(
                 "plate_share",
                 len(plates) / len(documents),
-                f"{len(plates)} of {len(documents)} profiled documents are plate books",
+                f"{len(plates)} of {len(documents)} profiled documents "
+                f"{'is a plate book' if len(plates) == 1 else 'are plate books'}",
                 tuple(sorted({line for document in documents for line in document.lines})),
             )
         )
