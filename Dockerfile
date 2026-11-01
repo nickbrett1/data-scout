@@ -62,11 +62,18 @@ RUN pdffonts -v && exiftool -ver && file --version && pdfinfo -v \
 RUN groupadd --gid 1000 app \
     && useradd --uid 1000 --gid 1000 --create-home --shell /bin/bash app
 
+# The commit this image was built from, shown on the datasets index and carried
+# by /healthz. It arrives as a build arg because the runtime stage has no .git
+# and no git binary: a label (org.opencontainers.image.revision, which the
+# pipeline also sets) is not readable from inside a running container.
+ARG GIT_SHA=unknown
+
 ENV PATH="/opt/venv/bin:$PATH" \
     HOME="/home/app" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    DATA_SCOUT_DATASETS_ROOT="/datasets"
+    DATA_SCOUT_DATASETS_ROOT="/datasets" \
+    DATA_SCOUT_BUILD="${GIT_SHA}"
 
 COPY --from=build /opt/venv /opt/venv
 COPY . .
@@ -77,3 +84,12 @@ EXPOSE 8710
 
 
 CMD ["python", "-m", "data_scout"]
+
+# Health is a verdict, not an uptime. This lives in the image rather than in
+# docker-compose.yml on purpose: Watchtower swaps the image, it never re-reads
+# a compose file, so a compose-only healthcheck would not reach a host that is
+# already deployed. The probe asks /livez, not /healthz — the latter re-scans
+# the datasets root (up to 50k entries per dataset) and is a browse surface,
+# not something to run every 30 seconds.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD python -c "import os,urllib.request,sys; port=os.environ.get('DATA_SCOUT_HTTP_PORT','8710'); r=urllib.request.urlopen('http://127.0.0.1:%s/livez' % port, timeout=4); sys.exit(0 if r.status == 200 else 1)"

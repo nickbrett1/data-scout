@@ -368,3 +368,31 @@ def test_a_document_that_already_has_the_nav_is_not_dressed_twice(server, datase
 
     _status, _content_type, body = get(server, f"/report/{DATASET_ID}/report-2026-10-26.html")
     assert body.count('<nav class="data-scout-nav">') == 1
+
+
+def test_livez_is_liveness_without_touching_the_datasets_root(server, monkeypatch):
+    """The Docker probe runs every 30 s; /healthz scans up to 50k entries per
+    dataset, so the probe must not be pointed at it."""
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("livez scanned the datasets root")
+
+    monkeypatch.setattr(app.inventory, "discover", boom)
+
+    status, content_type, body = get(server, "/livez")
+    assert status == 200
+    assert "application/json" in content_type
+    payload = json.loads(body)
+    assert payload["status"] == "ok"
+    assert "version" in payload
+    # Deliberately no /healthz call here: it *should* scan, which is the point.
+
+
+def test_the_image_declares_a_healthcheck_that_probes_livez():
+    """A compose-only healthcheck would never reach an already-deployed host:
+    Watchtower swaps the image and does not re-read the compose file."""
+    from pathlib import Path
+
+    text = (Path(__file__).parents[1] / "Dockerfile").read_text(encoding="utf-8")
+    assert "HEALTHCHECK" in text
+    assert "/livez" in text

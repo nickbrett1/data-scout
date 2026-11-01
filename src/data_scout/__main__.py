@@ -12,6 +12,11 @@ would be a second service (``data-scout-genproj-scaffold`` §6.2):
     Liveness plus the two resolved roots, the belt size and the recorded
     docling-serve observation, so a misconfigured mount — or a sidecar whose
     timeouts cannot be seen from its API — is visible without opening a shell.
+``/livez``
+    Liveness only, and O(1). ``/healthz`` re-scans the datasets root (up to
+    ``inventory.MAX_SCAN_ENTRIES`` per dataset) because it is a browse surface
+    for a person; that is the wrong cost for a 30-second Docker probe, so the
+    image's ``HEALTHCHECK`` asks this instead.
 ``/`` and ``/report/``
     The datasets index: what is available to scout, and the frozen artifacts
     each dataset already holds.
@@ -50,6 +55,7 @@ from starlette.routing import Route
 
 from data_scout import (
     __version__,
+    build,
     docling_service,
     inventory,
     registry,
@@ -173,6 +179,9 @@ def index_payload() -> dict[str, Any]:
 
     return {
         "version": __version__,
+        # The version says which release; the build says which commit. Rendered
+        # reports are frozen, so "which image made this one" is a real question.
+        "build": build.build_id(),
         "workspace": str(root),
         "datasets_root": str(datasets_root),
         "datasets_error": datasets_error,
@@ -199,7 +208,11 @@ def index_html(payload: dict[str, Any]) -> str:
         _INDEX_CSS,
         "</style></head><body><h1>data-scout datasets</h1>",
         f'<p class="muted">workspace <code>{_escape(payload["workspace"])}</code> · '
-        f'datasets <code>{_escape(payload["datasets_root"])}</code> · v{_escape(payload["version"])}</p>',
+        f'datasets <code>{_escape(payload["datasets_root"])}</code> · v{_escape(payload["version"])}'
+        # Short for the eye, full in the tooltip: the hash is here to answer
+        # "what am I running", and 40 characters inline is a wall.
+        f' · build <code title="{_escape(payload["build"])}">'
+        f'{_escape(build.short(payload["build"]))}</code></p>',
     ]
     if payload["datasets_error"]:
         parts.append(f'<p class="warn">The datasets root is unavailable: {_escape(payload["datasets_error"])}</p>')
@@ -318,6 +331,12 @@ def healthz(request: Request) -> Response:
     )
 
 
+def livez(request: Request) -> Response:
+    """Liveness, without the inventory scan ``/healthz`` is entitled to do."""
+    del request
+    return _json({"status": "ok", "version": __version__, "build": build.build_id()})
+
+
 def index_json(request: Request) -> Response:
     del request
     return _json(index_payload())
@@ -369,6 +388,7 @@ def build_app(docling: dict[str, Any] | None = None) -> Starlette:
     app.router.routes.extend(
         [
             Route("/healthz", healthz),
+            Route("/livez", livez),
             Route("/report/index.json", index_json),
             Route("/index.json", index_json),
             Route("/", index_page),
