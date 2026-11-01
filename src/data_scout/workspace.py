@@ -188,7 +188,17 @@ _HEADING_RE = re.compile(r"^#\s+(.+)$", re.MULTILINE)
 
 
 def _parse_scalar(value: str) -> Any:
+    """One frontmatter scalar: bool, int, null, or the string as written.
+
+    ``null``, ``~`` and an empty value are YAML's three spellings of *absent*,
+    and they parse to ``None``. They are not the strings ``"null"`` / ``"~"``:
+    a frame renders an unpinned dataset's fields as literal ``null`` (§3.2), and
+    reading that back as a string would turn "there is no pin" into a pin whose
+    commit is the word "null".
+    """
     text = value.strip().strip('"').strip("'")
+    if not text or text.lower() in {"null", "~"}:
+        return None
     if text.lower() in {"true", "false"}:
         return text.lower() == "true"
     if re.fullmatch(r"-?\d+", text):
