@@ -377,6 +377,20 @@ li {
   font-variant-numeric: tabular-nums;
 }
 
+/* The sentence under the number: what the number *means*, on the closed card.
+   Without it a reader has to open every row to find out whether they care. */
+.f-reading {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: #cbd5e1;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .f-meta .f-what {
   font-family: var(--mono);
   overflow: hidden;

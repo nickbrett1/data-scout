@@ -385,6 +385,29 @@ def _format_value(value: Any) -> str:
     return str(value)
 
 
+def _short_value(text: str) -> str:
+    """A hash is provenance, not a reading: show its ends, keep it whole in the detail."""
+    if len(text) <= 24:
+        return text
+    return f"{text[:12]}…{text[-4:]}"
+
+
+def _split_reading(text: str) -> tuple[str, str]:
+    """A block's first paragraph is what the row says; the rest is the argument.
+
+    The closed card has to answer "what does this number mean" without being
+    opened, so the first paragraph of the commentary is promoted into the row.
+    Authoring contract, therefore: lead with the plain reading, then explain.
+    """
+    paragraph, _, rest = text.partition("\n\n")
+    return paragraph.strip(), rest.strip()
+
+
+def _plain(html: str) -> str:
+    """Inline HTML is fine in a row; a block element would break the line."""
+    return re.sub(r"</?p>", "", html).strip()
+
+
 def _shorten(key: str, value: Any) -> str:
     """A row is scanned, not read: a 40-character absolute path is not a label."""
     text = str(value)
@@ -441,7 +464,7 @@ def _finding_html(
 ) -> str:
     """One row of the table: a line you can scan, that opens into the prose."""
     what = _row_params(finding.params)
-    value = _format_value(finding.value)
+    value = _short_value(_format_value(finding.value))
     meta = [f'<span class="f-n">n={finding.n:,}</span>', f'<span class="f-session">s{finding.session}</span>']
     if what:
         meta.append(f'<span class="f-what">{_escape(what)}</span>')
@@ -460,10 +483,15 @@ def _finding_html(
         "</span>",
         f'<span class="f-meta">{"".join(meta)}</span>',
     ]
+    # The reading is the row's reason to exist: a number with no sentence about
+    # it is a puzzle, and a report full of puzzles is the wall of text again.
+    reading, rest = _split_reading(commentary)
+    if reading:
+        summary.append(f'<span class="f-reading">{_plain(render_block(reading))}</span>')
     body = _detail_rows(finding, lines)
-    if commentary:
-        body.append(f'<div class="finding-note">{render_block(commentary)}</div>')
-    else:
+    if rest:
+        body.append(f'<div class="finding-note">{render_block(rest)}</div>')
+    elif not reading:
         body.append('<p class="finding-none">No commentary recorded for this line.</p>')
     return (
         f'<details class="finding" id="f{number}">'
