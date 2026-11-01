@@ -16,7 +16,7 @@ import time
 import pytest
 
 from data_scout import __main__ as app
-from data_scout import registry, workspace
+from data_scout import build, registry, workspace
 
 DATASET_ID = "demo-dataset"
 
@@ -283,6 +283,50 @@ def test_the_index_declares_the_icon_and_a_short_caption(server):
 
 def test_an_unknown_asset_path_is_404(server):
     assert get(server, "/icon-999.png")[0] == 404
+
+
+def test_the_index_shows_which_build_is_running(server, monkeypatch):
+    """The version says which release; the hash says which commit."""
+    commit = "c" * 40
+    monkeypatch.setenv(build.BUILD_ENV, commit)
+
+    status, _content_type, body = get(server, "/")
+
+    assert status == 200
+    assert "build <code" in body
+    # Short for the eye, full in the tooltip. A 40-character SHA inline is a wall.
+    assert f'<code title="{commit}">{commit[:12]}</code>' in body
+
+
+def test_index_json_carries_the_build_stamp(server, monkeypatch):
+    monkeypatch.setenv(build.BUILD_ENV, "abc123")
+
+    _status, _content_type, body = get(server, "/report/index.json")
+
+    assert json.loads(body)["build"] == "abc123"
+
+
+def test_livez_carries_the_build_stamp(server, monkeypatch):
+    """The Docker probe's payload should name the image it is probing."""
+    monkeypatch.setenv(build.BUILD_ENV, "abc123")
+
+    _status, _content_type, body = get(server, "/livez")
+
+    assert json.loads(body)["build"] == "abc123"
+
+
+def test_the_image_is_built_with_its_commit_stamped_in():
+    """A build arg, because a label is not readable from inside the container
+    and the runtime stage has no .git to ask."""
+    from pathlib import Path
+
+    root = Path(__file__).parents[1]
+    dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
+    assert "ARG GIT_SHA" in dockerfile
+    assert "DATA_SCOUT_BUILD" in dockerfile
+
+    pipeline = (root / ".buildkite" / "pipeline.yml").read_text(encoding="utf-8")
+    assert "--build-arg GIT_SHA=$$BUILDKITE_COMMIT" in pipeline
 
 
 def test_the_index_shows_a_pin_without_reading_the_frame(server, roots):
