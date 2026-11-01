@@ -283,3 +283,45 @@ def test_the_index_declares_the_icon_and_a_short_caption(server):
 
 def test_an_unknown_asset_path_is_404(server):
     assert get(server, "/icon-999.png")[0] == 404
+
+
+def test_the_index_shows_a_pin_without_reading_the_frame(server, roots):
+    """A pinned-but-unprofiled dataset must be visible, not raise."""
+    from data_scout import workspace
+
+    target = roots.datasets / DATASET_ID
+    target.mkdir(parents=True, exist_ok=True)
+    (target / workspace.PIN_FILENAME).write_text(
+        json.dumps(
+            {
+                "pin_schema": 1,
+                "dataset_id": DATASET_ID,
+                "dataset_commit": "84ba1903af58166a9e92dc7687e6893863e732e9",
+                "dataset_manifest_hash": "cab6e809cb982eba178a0f3a631e16d6.dir",
+                "dataset_files": 2,
+                "dataset_bytes": 10,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _status, _content_type, body = get(server, "/report/index.json")
+    record = json.loads(body)["datasets"][0]
+    assert record["pinned"] is True
+    assert record["dataset_commit"] == "84ba1903af58166a9e92dc7687e6893863e732e9"
+
+
+def test_a_corrupt_pin_degrades_to_pin_error_not_a_500(server, roots):
+    """The browse path stays alive; the frame path would stay strict."""
+    from data_scout import workspace
+
+    target = roots.datasets / DATASET_ID
+    target.mkdir(parents=True, exist_ok=True)
+    (target / workspace.PIN_FILENAME).write_text("{ not json", encoding="utf-8")
+
+    status, _content_type, body = get(server, "/report/index.json")
+    assert status == 200
+    record = json.loads(body)["datasets"][0]
+    assert record["pinned"] is False
+    assert record["dataset_commit"] is None
+    assert "pin.json" in record["pin_error"]
