@@ -280,3 +280,59 @@ def test_the_reader_takes_its_key_from_the_writer_not_a_version_literal(
     assert full["n"] == 2
     assert len(full["parts"]) == 2
     assert full["cache_key"] == "key-derived-by-the-writer"
+
+
+def test_parts_follow_the_body_tree_through_nested_groups():
+    """Reading order is the tree's, and a group is not a place parts stop."""
+    from data_scout.tools.partition_doc import parts_from_docling_json
+
+    document = {
+        "body": {
+            "children": [
+                {
+                    "label": "chapter",
+                    "children": [
+                        {"$ref": "#/texts/0"},
+                        {"children": [{"$ref": "#/texts/1"}]},
+                    ],
+                }
+            ]
+        },
+        "texts": [
+            {"self_ref": "#/texts/0", "label": "title", "text": "One"},
+            {"self_ref": "#/texts/1", "label": "text", "text": "Two"},
+        ],
+    }
+
+    parts = parts_from_docling_json(document)
+
+    assert [p["text"] for p in parts] == ["One", "Two"]
+    assert all("placed" not in p for p in parts)
+
+
+def test_a_body_that_does_not_reach_every_item_does_not_shorten_the_book():
+    """An EPUB's chapters are in ``texts``, not in ``body`` (the 196-words-in-a-book defect).
+
+    Docling returns every paragraph of an EPUB in ``texts`` but a ``body`` that
+    holds only the front matter. A body-only reader reported 58 parts and 196
+    words out of 37,585, under a ``success`` status. The part list must be
+    complete, and the items the tree missed must say so.
+    """
+    from data_scout.tools.partition_doc import parts_from_docling_json
+
+    document = {
+        "body": {"children": [{"$ref": "#/texts/0"}]},
+        "texts": [
+            {"self_ref": "#/texts/0", "label": "text", "text": "Title Page"},
+            {"self_ref": "#/texts/1", "label": "title", "text": "Chapter One"},
+            {"self_ref": "#/texts/2", "label": "text", "text": "The book itself, at last."},
+        ],
+    }
+
+    parts = parts_from_docling_json(document)
+
+    assert [p["text"] for p in parts] == ["Title Page", "Chapter One", "The book itself, at last."]
+    assert "placed" not in parts[0]
+    assert parts[1]["placed"] is False
+    assert parts[1]["type"] == "Title"
+    assert sum(len(p["text"].split()) for p in parts) == 9

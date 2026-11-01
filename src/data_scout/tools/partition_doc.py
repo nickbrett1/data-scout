@@ -119,20 +119,45 @@ def parts_from_docling_json(document: dict[str, Any], *, source: str | None = No
     Reading order comes from the body tree when it is there, because that is
     what ``partition_doc`` is *for*; when it is absent, the ``texts`` array in
     document order is the fallback and is labelled as such.
+
+    **The body tree is not guaranteed to reach every item**, so the tree is a
+    first pass and not the whole answer. An EPUB is the vivid case: Docling
+    returns 1,051 ``texts`` for a whole book but a ``body`` holding only the
+    front matter, so a body-only reader reports 58 parts and 196 words out of
+    37,585 — a silent 99% loss under a ``success`` status. Anything the tree did
+    not place is appended in document order and marked ``"placed": False``, so
+    the part list is complete and the fallback is visible rather than inferred.
+
+    ``words`` is counted on the **untruncated** text, because ``text`` is capped
+    at ``_MAX_PART_CHARS`` for the notebook's sake and a long paragraph would
+    otherwise be counted short. The cap is why the two must be separate: one of
+    the EPUBs merged 488 paragraphs holding 38,554 words, so a word count taken
+    over the capped ``text`` reported 27,079 — enough to fail a
+    ``words_per_chapter >= 1500`` gate the book actually passes.
     """
     parts: list[dict[str, Any]] = []
+    seen: set[str] = set()
 
-    def add(label: str | None, text: str, ref: str | None, page: int | None) -> None:
-        parts.append(
-            {
-                "type": _normalise_label(label),
-                "label": label,
-                "text": text[:_MAX_PART_CHARS],
-                "text_chars": len(text),
-                "self_ref": ref,
-                "page": page,
-            }
-        )
+    def add(
+        label: str | None,
+        text: str,
+        ref: str | None,
+        page: int | None,
+        *,
+        placed: bool = True,
+    ) -> None:
+        part = {
+            "type": _normalise_label(label),
+            "label": label,
+            "text": text[:_MAX_PART_CHARS],
+            "text_chars": len(text),
+            "words": len(text.split()),
+            "self_ref": ref,
+            "page": page,
+        }
+        if not placed:
+            part["placed"] = False
+        parts.append(part)
 
     texts = {
         item.get("self_ref"): item
@@ -158,25 +183,35 @@ def parts_from_docling_json(document: dict[str, Any], *, source: str | None = No
             return page if isinstance(page, int) else None
         return None
 
-    if body:
-        for child in body:
-            ref = child.get("$ref") if isinstance(child, dict) else None
-            if ref in texts:
-                item = texts[ref]
-                add(item.get("label"), _part_text(item.get("text")), ref, page_of(item))
-            elif ref in tables:
-                item = tables[ref]
-                add("table", "", ref, page_of(item))
-            elif ref in pictures:
-                item = pictures[ref]
-                add("picture", "", ref, page_of(item))
-    else:
-        for ref, item in texts.items():
-            add(item.get("label"), _part_text(item.get("text")), ref, page_of(item))
-        for ref, item in tables.items():
-            add("table", "", ref, page_of(item))
-        for ref, item in pictures.items():
-            add("picture", "", ref, page_of(item))
+    def emit(ref: str, *, placed: bool) -> None:
+        if ref in seen:
+            return
+        seen.add(ref)
+        if ref in texts:
+            item = texts[ref]
+            add(item.get("label"), _part_text(item.get("text")), ref, page_of(item), placed=placed)
+        elif ref in tables:
+            add("table", "", ref, page_of(tables[ref]), placed=placed)
+        elif ref in pictures:
+            add("picture", "", ref, page_of(pictures[ref]), placed=placed)
+
+    def walk(node: Any) -> None:
+        """Depth-first over the body tree: leaves are ``$ref``s, groups have children."""
+        if not isinstance(node, dict):
+            return
+        ref = node.get("$ref")
+        if isinstance(ref, str):
+            emit(ref, placed=True)
+            return
+        for child in node.get("children") or []:
+            walk(child)
+
+    for child in body:
+        walk(child)
+
+    # Second pass: everything the body tree did not reach, in document order.
+    for ref in (*texts, *tables, *pictures):
+        emit(ref, placed=not body)
 
     if source:
         for part in parts:
@@ -343,7 +378,12 @@ def _require_httpx():
     return httpx
 
 
-@cached(tool="partition_doc", tool_version=f"3+docling-model:{_model_version()}")
+#: Version 5: the part list is no longer body-only, and each part carries the
+#: word count of its **untruncated** text. A body that does not reach every item
+#: (an EPUB's chapters, most starkly) used to drop text silently, and words
+#: counted over the 600-char cap made a long book look short. The flattened
+#: shape is different, so a v4 entry is not this observation.
+@cached(tool="partition_doc", tool_version=f"5+docling-model:{_model_version()}")
 def _observation(path: str | os.PathLike[str]) -> dict[str, Any]:
     """The **cached** observation: every part, uncapped.
 

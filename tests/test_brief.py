@@ -96,7 +96,9 @@ def test_the_artbook_beside_a_novel_is_routed_not_averaged_away():
     html = brief.render_brief(brief.read(findings))
 
     assert winner is not None and winner.profile.id == "literature-mining"
-    assert "route it to a vision pass" in html
+    # the note is read from the same routing the table shows, so the two agree
+    assert "1 of 2 documents is outside this profile" in html
+    assert "artbook.pdf → visual search" in html
     # and the vision profile is not silently dropped: it is partial, with the document named
     assert "partial — 1 document" in html
 

@@ -192,7 +192,11 @@ CATALOGUE: tuple[Profile, ...] = (
             Criterion("narrative_share_median", ">= 0.5", weight=2, tool="structure_mix"),
             Criterion("documents", "<= 200", tool="frame"),
         ),
-        partial=(Criterion("words_per_page", ">= 150", tool="partition_doc"),),
+        partial=(
+            Criterion("words_per_page", ">= 150", tool="partition_doc"),
+            # For a document with no page count (an EPUB): a chapter of real prose.
+            Criterion("words_per_chapter", ">= 1500", tool="partition_doc"),
+        ),
         moves=(
             "Parse one book end to end and check the section structure by eye before trusting the "
             "chunker.",
@@ -561,7 +565,11 @@ def document_routes(
             if not profile.partial:
                 continue
             cells = tuple(_document_cell(document, criterion) for criterion in profile.partial)
-            if cells and all(cell.state == "pass" for cell in cells):
+            # A criterion the format cannot answer is not a failure: an EPUB has no
+            # page count, so `words_per_page` is *not applicable* there rather than
+            # false. At least one measured test must pass, and none may fail.
+            measured = [cell for cell in cells if cell.state != "unknown"]
+            if measured and all(cell.state == "pass" for cell in measured):
                 route = DocumentRoute(document=document.name, profile=profile, cells=cells)
                 break
         routes.append(route)
@@ -590,15 +598,13 @@ def split_advice(routes: Sequence[DocumentRoute]) -> str:
     leader, leader_count = max(counts.items(), key=lambda item: item[1])
     minority = total - leader_count
     share = minority / total if total else 0.0
+    listing = ", ".join(f"{count} {key}" for key, count in counts.items())
     if share >= SPLIT_MINORITY_SHARE:
-        others = ", ".join(
-            f"{count} {key}" for key, count in counts.items() if key not in (leader, "unrouted")
-        )
         return (
-            f"Worth splitting: {minority} of {total} documents ({share:.0%}) need a different "
-            f"pipeline from the {leader_count} that are {leader}"
-            + (f" — the others are {others}" if others else "")
-            + ". Run them as two corpora and join the results, rather than averaging them here."
+            f"Worth splitting: {minority} of {total} documents ({share:.0%}) go a different "
+            f"way from the {leader_count} that {'is' if leader_count == 1 else 'are'} {leader} "
+            f"— the split is {listing}. Run them as two corpora and join the results, "
+            "rather than averaging them here."
         )
     return (
         f"Not worth splitting: {leader_count} of {total} documents are {leader}, and the "

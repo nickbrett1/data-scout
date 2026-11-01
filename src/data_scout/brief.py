@@ -37,6 +37,9 @@ PROSE_WORDS_PER_PAGE = 150.0
 #: content. Below :data:`SPARSE_WORDS_PER_PAGE` there is barely a caption either.
 PLATE_IMAGES_PER_PAGE = 5.0
 SPARSE_WORDS_PER_PAGE = 30.0
+#: A chapter carrying this much prose is a prose document, for formats with no
+#: page count. Set well above a caption or a title page.
+PROSE_WORDS_PER_CHAPTER = 1500.0
 
 
 @dataclass(frozen=True)
@@ -63,6 +66,11 @@ class DocProfile:
     words: int | None = None
     images_per_page: float | None = None
     narrative_share: float | None = None
+    #: Section-like parts (docling ``Title``). The reading of last resort for a
+    #: format with no pages: an EPUB has no page count, but a chapter is a
+    #: structural unit both formats have, so a pageless document is judged by how
+    #: much prose one chapter carries rather than by a page count it does not have.
+    chapters: int | None = None
     lines: tuple[int, ...] = ()
 
     @property
@@ -70,6 +78,12 @@ class DocProfile:
         if self.words is None or not self.pages:
             return None
         return self.words / self.pages
+
+    @property
+    def words_per_chapter(self) -> float | None:
+        if self.words is None or not self.chapters:
+            return None
+        return self.words / self.chapters
 
     def value(self, fact: str) -> float | None:
         """The per-document fact a criterion asked for, or None if unmeasured."""
@@ -79,6 +93,8 @@ class DocProfile:
             return self.images_per_page
         if fact == "narrative_share":
             return self.narrative_share
+        if fact == "words_per_chapter":
+            return self.words_per_chapter
         return None
 
     @property
@@ -88,7 +104,11 @@ class DocProfile:
             return "plate"
         words_per_page = self.words_per_page
         if words_per_page is None:
-            return "unknown"
+            # No pages: fall back to the structure every format has.
+            per_chapter = self.words_per_chapter
+            if per_chapter is None:
+                return "unknown"
+            return "prose" if per_chapter >= PROSE_WORDS_PER_CHAPTER else "sparse"
         if words_per_page >= PROSE_WORDS_PER_PAGE:
             return "prose"
         if words_per_page < SPARSE_WORDS_PER_PAGE:
@@ -102,7 +122,9 @@ class DocProfile:
 
 #: The per-document facts a profile may test. Declared, so evaluation never has to
 #: guess whether ``images_per_page`` means "the corpus" or "each document".
-PER_DOCUMENT_FACTS = frozenset({"words_per_page", "images_per_page", "narrative_share"})
+PER_DOCUMENT_FACTS = frozenset(
+    {"words_per_page", "words_per_chapter", "images_per_page", "narrative_share"}
+)
 
 
 @dataclass(frozen=True)
@@ -205,13 +227,16 @@ def read(findings: Sequence[Any]) -> Corpus:
         # Per-document shape: any line naming a document with a page count.
         document = _document_of(params)
         page_count = _number(params.get("pages"))
-        if document and page_count:
+        words_on_line = _number(params.get("docling_words") or params.get("words"))
+        if document and (page_count or words_on_line):
             profile = profiles_by_document.get(document, DocProfile(document=document))
-            update: dict[str, Any] = {
-                "pages": int(page_count),
-                "lines": (*profile.lines, line_number),
-            }
-            words = _number(params.get("docling_words") or params.get("words"))
+            update: dict[str, Any] = {"lines": (*profile.lines, line_number)}
+            if page_count:
+                update["pages"] = int(page_count)
+            chapters = _number(params.get("chapters"))
+            if chapters:
+                update["chapters"] = int(chapters)
+            words = words_on_line
             if words is not None:
                 update["words"] = int(words)
             images = _number(value) if "images per page" in unit else None
@@ -457,11 +482,19 @@ def _documents_html(
             if route is not None
             else ""
         )
+        # A pageless document has no words-a-page figure; show the unit it does
+        # have, and say which, rather than a dash that hides a real reading.
+        if document.words_per_page is not None:
+            density = _fmt(document.words_per_page, "{:.0f}")
+        elif document.words_per_chapter is not None:
+            density = f"{document.words_per_chapter:,.0f} w/ch"
+        else:
+            density = "\u2014"
         rows.append(
             "<tr>"
             f'<td class="brief-doc">{_escape(document.name)}</td>'
             f"<td>{_fmt(None if document.pages is None else float(document.pages), '{:.0f}')}</td>"
-            f"<td>{_fmt(document.words_per_page, '{:.0f}')}</td>"
+            f"<td>{density}</td>"
             f"<td>{_fmt(document.images_per_page, '{:.1f}')}</td>"
             f'<td><span class="brief-kind k-{document.kind}">{document.kind}</span></td>'
             f"<td>{serves}</td>"
@@ -566,31 +599,44 @@ def _verdict_html(corpus: Corpus, assessments: Sequence[profiles.Assessment]) ->
 
 
 def _routing_note(corpus: Corpus, winner: profiles.Assessment) -> str:
-    """What to do with the documents the winner does not cover."""
-    outside = tuple(
-        document
-        for document in corpus.documents
-        if document.kind == "unknown" or document.kind == "plate"
+    """What happens to the documents this profile does not claim.
+
+    Read from ``document_routes``, the same evaluation the per-document table
+    shows, rather than from ``kind``: the two can disagree, and when they do the
+    older kind-based note was the one that was wrong. A plate-shaped book with
+    244 words a page is a prose book with pictures, so literature mining does
+    claim it — and it read badly to be told to "route them to a vision pass" one
+    paragraph after the table said they went to literature mining.
+    """
+    routes = profiles.document_routes(corpus)
+    elsewhere = tuple(
+        route for route in routes if route.profile is not None and route.profile.id != winner.profile.id
     )
-    if not outside or winner.profile.id == "visual-search":
-        return ""
-    plates = tuple(document for document in outside if document.kind == "plate")
-    unknown = tuple(document for document in outside if document.kind == "unknown")
+    unrouted = tuple(route for route in routes if route.profile is None)
     pieces = []
-    if plates:
-        names = ", ".join(_escape(document.name) for document in plates)
-        pieces.append(
-            f"{len(plates)} of {len(corpus.documents)} documents "
-            f"{'is an image-plate book' if len(plates) == 1 else 'are image-plate books'} "
-            f"({names}): route {'it' if len(plates) == 1 else 'them'} to a vision pass, "
-            "because a text pipeline will describe the layout instead of the content."
+    if elsewhere:
+        by_profile: dict[str, list[str]] = {}
+        for route in elsewhere:
+            # the id, not the title: a routing sentence is a signpost, and the
+            # title ("Vision over page images — describe the plates...") is a
+            # paragraph. The full title is one click away on /profiles.
+            by_profile.setdefault(route.profile.id.replace("-", " "), []).append(route.document)
+        destinations = "; ".join(
+            f"{', '.join(_escape(name) for name in names)} → {_escape(title)}"
+            for title, names in by_profile.items()
         )
-    if unknown:
         pieces.append(
-            f"{len(unknown)} document{'s' if len(unknown) > 1 else ''} "
-            f"{'has' if len(unknown) == 1 else 'have'} no word count yet, so "
-            f"{'it is' if len(unknown) == 1 else 'they are'} not yet routed."
+            f"{len(elsewhere)} of {len(routes)} documents "
+            f"{'is' if len(elsewhere) == 1 else 'are'} outside this profile: {destinations}."
         )
+    if unrouted:
+        names = ", ".join(_escape(route.document) for route in unrouted)
+        pieces.append(
+            f"{len(unrouted)} document{'s' if len(unrouted) > 1 else ''} "
+            f"({names}) {'are' if len(unrouted) > 1 else 'is'} claimed by no profile yet."
+        )
+    if not pieces:
+        return ""
     return f'<p class="verdict-routing">{_escape(" ".join(pieces))}</p>'
 
 
