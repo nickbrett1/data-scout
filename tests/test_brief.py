@@ -152,3 +152,23 @@ def test_the_brief_is_one_styled_document_showing_every_profile():
     # a ruled-out profile is one line of information, not a wall
     assert 'class="prof o-disqualified" id="p-warehouse"' in html
     assert 'class="prof o-disqualified" id="p-warehouse" open' not in html
+
+
+def test_the_per_document_table_says_how_much_of_the_corpus_it_covers():
+    """Four rows over a corpus of eight is a gap, not a corpus of four."""
+    frame = line(tool="frame", value=1000, unit="files", params={"identity_files": 8})
+    corpus = brief.read([frame, PROSE_BOOK, PLATE_BOOK, HAS_TEXT])
+
+    html = brief.render_brief(corpus)
+
+    assert "Per document — 2 of 8 profiled" in html
+    assert "Only 2 of 8 documents have a per-document reading" in html
+    assert "a per-document reading for the 6 documents not yet profiled" in html
+
+
+def test_the_brief_stops_at_the_decision():
+    """Advice and provenance live on /profiles and in the report, not here."""
+    html = brief.render_brief(brief.read([PROSE_BOOK, HAS_TEXT, tables(parts=8, with_text=0)]))
+
+    for heading in ("First moves", "What would change this", "Where this comes from"):
+        assert heading not in html

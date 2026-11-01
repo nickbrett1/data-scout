@@ -414,6 +414,30 @@ def _fmt(value: float | None, template: str) -> str:
     return "—" if value is None else template.format(value)
 
 
+def _document_count(corpus: Corpus) -> tuple[int, int | None]:
+    """How many documents have a per-document reading, against how many exist.
+
+    The frame knows the corpus; `pdf_text_compare` knows only the documents it was
+    run on. A table of four rows over a corpus of eight is a coverage gap, and a
+    reader who is not told will read it as "the corpus has four documents".
+    """
+    frame = corpus.fact("documents")
+    total = int(frame.value) if frame is not None else None
+    return len(corpus.documents), total
+
+
+def _coverage_html(corpus: Corpus) -> str:
+    profiled, total = _document_count(corpus)
+    if total is None or total <= profiled:
+        return ""
+    missing = total - profiled
+    return (
+        f'<p class="brief-note">Only {profiled} of {total} documents have a per-document '
+        f"reading: the other {missing} are not in this table and are not routed. One "
+        "<code>pdf_text_compare</code> run over them closes the gap.</p>"
+    )
+
+
 def _documents_html(corpus: Corpus) -> str:
     if not corpus.documents:
         return ""
@@ -557,7 +581,7 @@ def _routing_note(corpus: Corpus, winner: profiles.Assessment) -> str:
     return f'<p class="verdict-routing">{_escape(" ".join(pieces))}</p>'
 
 
-def _next_measurements(assessments: Sequence[profiles.Assessment]) -> str:
+def _next_measurements(corpus: Corpus, assessments: Sequence[profiles.Assessment]) -> str:
     """Gate criteria nobody has measured, as an agenda with a tool on each."""
     wanted: dict[str, str | None] = {}
     for assessment in assessments:
@@ -567,7 +591,14 @@ def _next_measurements(assessments: Sequence[profiles.Assessment]) -> str:
             wanted.setdefault(cell.criterion.fact, cell.tool)
     if not wanted:
         return ""
-    items = "".join(
+    profiled, total = _document_count(corpus)
+    unprofiled = (
+        f'<li>a per-document reading for the {total - profiled} documents not yet profiled'
+        f' <span class="brief-cite">pdf_text_compare</span></li>'
+        if total is not None and total > profiled
+        else ""
+    )
+    items = unprofiled + "".join(
         f'<li><code>{_escape(fact)}</code>'
         + (f' <span class="brief-cite">{_escape(tool)}</span>' if tool else "")
         + "</li>"
@@ -575,9 +606,9 @@ def _next_measurements(assessments: Sequence[profiles.Assessment]) -> str:
     )
     return (
         '<section class="brief-open"><h2>What is still unmeasured</h2>'
-        '<p class="brief-note">These are gate criteria on profiles the corpus has not been '
-        "disqualified from. An unknown never rules a profile out — it is the next session's "
-        "question, and it comes with the instrument that answers it.</p>"
+        '<p class="brief-note">Gate criteria nobody has measured, and documents nobody has '
+        "profiled. An unknown never rules a profile out — it is the next session's question, "
+        "and it comes with the instrument that answers it.</p>"
         f'<ul class="tasks">{items}</ul></section>'
     )
 
@@ -585,7 +616,6 @@ def _next_measurements(assessments: Sequence[profiles.Assessment]) -> str:
 def body(corpus: Corpus, assessments: Sequence[profiles.Assessment] | None = None) -> str:
     """The brief: verdict, the whole matrix, the documents, the plan."""
     scored = tuple(assessments) if assessments is not None else profiles.evaluate(corpus)
-    winner = profiles.recommendation(scored)
     parts = [_verdict_html(corpus, scored)]
 
     parts.append('<section class="matrix"><h2>Every profile, scored</h2>')
@@ -600,35 +630,17 @@ def body(corpus: Corpus, assessments: Sequence[profiles.Assessment] | None = Non
 
     documents = _documents_html(corpus)
     if documents:
+        profiled, total = _document_count(corpus)
+        heading = f"Per document — {profiled} of {total} profiled" if total else "Per document"
         parts.append(
-            '<section class="brief-docs"><h2>Per document</h2>'
+            f'<section class="brief-docs"><h2>{heading}</h2>'
             '<p class="brief-note">Words a page and pictures a page are the routing decision: '
             f"prose is at least {PROSE_WORDS_PER_PAGE:.0f} words a page, a plate book at least "
             f"{PLATE_IMAGES_PER_PAGE:.0f} images a page. A dash is a measurement nobody took.</p>"
-            f"{documents}</section>"
+            f"{_coverage_html(corpus)}{documents}</section>"
         )
 
-    parts.append(_next_measurements(scored))
-
-    if winner is not None:
-        parts.append('<section class="brief-do"><h2>First moves</h2><ol>')
-        parts.extend(f"<li>{_escape(move)}</li>" for move in winner.profile.moves)
-        parts.append("</ol></section>")
-
-        parts.append('<section class="brief-not"><h2>Do not</h2><ul>')
-        parts.extend(f"<li>{_escape(item)}</li>" for item in winner.profile.not_to_do)
-        parts.append("</ul></section>")
-
-        parts.append('<section class="brief-open"><h2>What would change this</h2><ul>')
-        parts.extend(f"<li>{_escape(item)}</li>" for item in winner.profile.falsifiers)
-        parts.append("</ul></section>")
-
-    parts.append(
-        '<section class="report-notes"><h2>Where this comes from</h2>'
-        "<p>Every reading above is a line in <code>findings.jsonl</code>, and the citations name "
-        "the line; the profiles are the catalogue at <a href=\"/profiles\">/profiles</a>. Nothing "
-        "here is a measurement of its own — the evidence is the report.</p></section>"
-    )
+    parts.append(_next_measurements(corpus, scored))
     return "".join(parts)
 
 

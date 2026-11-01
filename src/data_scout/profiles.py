@@ -574,6 +574,26 @@ def profile_card(profile: Profile) -> str:
             f'<ul class="criteria">{partial}</ul></div>'
         )
     parts.append("</div>")
+
+    # The advice belongs to the profile, not to a dataset: what to do first, what
+    # not to do, and what would overturn the call. It lives on this page, collapsed,
+    # so the brief can stop at the decision.
+    advice: list[str] = []
+    for label, kind, items in (
+        ("First moves", "ol", profile.moves),
+        ("Do not", "ul", profile.not_to_do),
+        ("What would overturn this", "ul", profile.falsifiers),
+    ):
+        if items:
+            body = "".join(f"<li>{_escape(item)}</li>" for item in items)
+            advice.append(f'<p class="profile-label">{label}</p><{kind}>{body}</{kind}>')
+    if advice:
+        parts.append(
+            '<details class="profile-advice">'
+            "<summary>How to run it, and what would overturn it</summary>"
+            f'{"".join(advice)}</details>'
+        )
+
     parts.append(
         f'<p class="profile-meta"><code>{_escape(profile.id)}</code> · '
         f'{_escape(profile.use_case)} · catalog v{CATALOGUE_VERSION}</p>'

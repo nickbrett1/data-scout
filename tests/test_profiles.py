@@ -212,4 +212,7 @@ def test_the_catalogue_page_shows_every_profile_and_its_rule():
         assert f'id="profile-{profile.id}"' in html
         assert profile.title.split(" — ")[0] in html
     assert "never disqualifies" in html
+    # the advice is the profile's, so it travels with the profile and not the brief
+    assert "How to run it, and what would overturn it" in html
+    assert "First moves" in html
     assert f"catalog v{profiles.CATALOGUE_VERSION}" in html

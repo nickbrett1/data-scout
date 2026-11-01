@@ -907,6 +907,36 @@ body.jp-Notebook,
   color: var(--fg);
 }
 
+/* The profile's advice: folded away on the catalogue page, because it is about
+ * how to run a use-case, not about any corpus in particular. */
+.profile-advice {
+  margin: 0.6rem 0 0;
+  border-top: 1px solid var(--border);
+}
+
+.profile-advice > summary {
+  padding: 0.55rem 0;
+  color: var(--accent);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.profile-advice ol,
+.profile-advice ul {
+  margin: 0 0 0.6rem;
+  padding-left: 1.15rem;
+}
+
+.profile-advice li {
+  margin: 0.3rem 0;
+  color: #cbd5e1;
+  font-size: 0.84rem;
+}
+
+.profile-advice .profile-label {
+  margin: 0.5rem 0 0.2rem;
+}
+
 .crit-favour code,
 .crit-partial code {
   color: var(--muted);
