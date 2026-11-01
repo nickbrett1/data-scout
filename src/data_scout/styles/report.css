@@ -751,7 +751,11 @@ body.jp-Notebook,
 
 .cell {
   display: grid;
-  grid-template-columns: 1.1rem minmax(0, 1fr) max-content;
+  /* The third column is `minmax(0, max-content)`, not `max-content`: a long
+   * reading ("up to 40.9 images a page (BG3_Artbook_High_Res.pdf)") must be
+   * allowed to shrink, or it takes its full width and squeezes the test column
+   * to one character per line. */
+  grid-template-columns: 1.1rem minmax(0, 1fr) minmax(0, max-content);
   gap: 0.1rem 0.5rem;
   align-items: baseline;
   padding: 0.3rem 0;
@@ -760,15 +764,17 @@ body.jp-Notebook,
 }
 
 .cell-test {
+  min-width: 0;
   font-family: var(--mono);
   font-size: 0.76rem;
   color: var(--muted);
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .cell-observed {
   color: var(--fg);
   text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .cell .mark {
@@ -799,6 +805,20 @@ body.jp-Notebook,
 
 .cell .brief-cite {
   grid-column: 2 / -1;
+}
+
+/* On a phone the reading is wider than the space beside the test, so it drops
+ * under it: a reading that wraps to one character a line is not a reading. */
+@media (max-width: 30rem) {
+  .cell {
+    grid-template-columns: 1.1rem minmax(0, 1fr);
+  }
+
+  .cell-observed {
+    grid-column: 2;
+    color: var(--muted);
+    text-align: left;
+  }
 }
 
 .profile-label {
