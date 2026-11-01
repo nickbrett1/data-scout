@@ -30,6 +30,7 @@ creates it under that tree.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass, field
@@ -85,6 +86,17 @@ class NotScoped(WorkspaceError):
     """No dataset id was supplied and none is in the environment."""
 
 
+class PinUnreadable(WorkspaceError):
+    """A pin file exists but cannot be understood. Not the same fact as no pin.
+
+    An absent pin is ``None`` — a dataset may be unversioned by owner decision.
+    A pin that is present and malformed, missing a key, of the wrong type,
+    written under an unknown ``pin_schema``, or naming a different dataset is
+    this error. Conflating the two is how a corrupt store silently reads as an
+    unpinned one.
+    """
+
+
 def datasets_root() -> Path:
     """The read-only datasets root, from the environment, default ``/datasets``."""
     return Path(os.environ.get(DATASETS_ROOT_ENV) or DEFAULT_DATASETS_ROOT)
@@ -137,6 +149,142 @@ def _visible_dirs(root: Path) -> list[str]:
         return [entry.name for entry in root.iterdir() if entry.is_dir()]
     except OSError:
         return []
+
+
+# --------------------------------------------------------------------------
+# pin.json — the host's claim about the payload, read only here
+# --------------------------------------------------------------------------
+
+#: The pin file's name, at ``<datasets_root>/<dataset-id>/pin.json``. Written by
+#: the host (``/srv/bin/datasets pin``); never by anything in this image.
+PIN_FILENAME = "pin.json"
+
+#: The only pin format this reader understands. Unknown → :class:`PinUnreadable`.
+PIN_SCHEMA = 1
+
+
+@dataclass(frozen=True)
+class DatasetPin:
+    """A pin read from disk: which bytes the host says this dataset is.
+
+    ``dataset_files`` / ``dataset_bytes`` are load-bearing, not decoration: the
+    frame measurement cross-checks them so the image never records a pin it did
+    not verify against the payload it just measured. ``tag``, ``dvc_version``
+    and ``written_at`` are provenance for a human; nothing reads them
+    programmatically.
+    """
+
+    dataset_id: str
+    dataset_commit: str
+    dataset_manifest_hash: str
+    dataset_files: int
+    dataset_bytes: int
+    tag: str | None = None
+    dvc_version: str | None = None
+    written_at: str | None = None
+
+
+def pin_path(dataset_id: str) -> Path:
+    """``<datasets_root>/<dataset_id>/pin.json``. Beside :func:`dataset_path`.
+
+    Unlike :func:`dataset_path`, this does **not** require the dataset to exist:
+    a pin check is meaningful precisely when a mount is misconfigured, and
+    "there is no pin at this path" must be answerable without first proving the
+    dataset is present.
+    """
+    return datasets_root() / validate_dataset_id(dataset_id) / PIN_FILENAME
+
+
+def read_pin(dataset_id: str, root: Path | None = None) -> DatasetPin | None:
+    """The pin recorded for this dataset, or ``None`` if none was ever recorded.
+
+    ``root`` defaults to :func:`datasets_root`. ``measure_frame`` passes its own
+    root so a fixture pin is visible beside a fixture payload; that is the only
+    reason the parameter exists. Reading is one file in one direction: no git,
+    no subprocess, no DVC.
+
+    Rules, each of which is a test: an absent file is ``None`` (an unversioned
+    dataset is legitimate); a present file that is malformed, missing a required
+    key, of the wrong type, under an unknown ``pin_schema``, or naming a
+    different ``dataset_id`` raises :class:`PinUnreadable` naming the path and
+    the problem. This function never writes.
+    """
+    dataset_id = validate_dataset_id(dataset_id)
+    base = Path(root) if root is not None else datasets_root()
+    path = base / dataset_id / PIN_FILENAME
+    if not path.is_file():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise PinUnreadable(f"{path}: pin file could not be read ({exc})") from exc
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise PinUnreadable(f"{path}: pin file is not valid JSON ({exc})") from exc
+    if not isinstance(data, dict):
+        raise PinUnreadable(
+            f"{path}: pin file must be a JSON object, got {type(data).__name__}"
+        )
+
+    schema = data.get("pin_schema")
+    if isinstance(schema, bool) or not isinstance(schema, int):
+        raise PinUnreadable(
+            f"{path}: pin_schema must be an integer, got {schema!r}"
+        )
+    if schema != PIN_SCHEMA:
+        raise PinUnreadable(
+            f"{path}: pin_schema {schema} is not one this reader understands "
+            f"(known: {PIN_SCHEMA})"
+        )
+
+    required = (
+        "dataset_id",
+        "dataset_commit",
+        "dataset_manifest_hash",
+        "dataset_files",
+        "dataset_bytes",
+    )
+    missing = [key for key in required if key not in data]
+    if missing:
+        raise PinUnreadable(
+            f"{path}: pin file is missing required keys: {', '.join(missing)}"
+        )
+
+    for key in ("dataset_id", "dataset_commit", "dataset_manifest_hash"):
+        if not isinstance(data[key], str) or not data[key]:
+            raise PinUnreadable(
+                f"{path}: {key} must be a non-empty string, got {data[key]!r}"
+            )
+    for key in ("dataset_files", "dataset_bytes"):
+        value = data[key]
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise PinUnreadable(
+                f"{path}: {key} must be an integer, got {value!r}"
+            )
+    for key in ("tag", "dvc_version", "written_at"):
+        value = data.get(key)
+        if value is not None and not isinstance(value, str):
+            raise PinUnreadable(
+                f"{path}: {key} must be a string or null, got {value!r}"
+            )
+
+    if data["dataset_id"] != dataset_id:
+        raise PinUnreadable(
+            f"{path}: pin names dataset {data['dataset_id']!r} but the dataset "
+            f"was addressed as {dataset_id!r}; the pin describes different bytes"
+        )
+
+    return DatasetPin(
+        dataset_id=data["dataset_id"],
+        dataset_commit=data["dataset_commit"],
+        dataset_manifest_hash=data["dataset_manifest_hash"],
+        dataset_files=data["dataset_files"],
+        dataset_bytes=data["dataset_bytes"],
+        tag=data.get("tag"),
+        dvc_version=data.get("dvc_version"),
+        written_at=data.get("written_at"),
+    )
 
 
 # --------------------------------------------------------------------------
