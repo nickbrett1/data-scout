@@ -428,10 +428,10 @@ def _detail_rows(finding: Any, lines: Sequence[int] = ()) -> list[str]:
     """Everything the row does not show: parameters, provenance, the decision."""
     parts = ['<dl class="f-facts">']
     if lines:
-        reappends = ", ".join(str(line) for line in lines[1:])
+        extra = [str(line) for line in lines[1:]]
         where = f"line {lines[0]}"
-        if reappends:
-            where += f" · re-appended at line{', ' if len(lines) > 2 else ''} {reappends}"
+        if extra:
+            where += f" · re-appended at line{'s' if len(extra) > 1 else ''} {', '.join(extra)}"
         parts.append(f"<dt>ledger</dt><dd>{_escape(where)}</dd>")
     parts.append(
         f'<dt>measured</dt><dd><code>{_escape(finding.tool)}</code> '
