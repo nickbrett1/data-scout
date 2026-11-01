@@ -191,6 +191,12 @@ identity this session stands on.
 - `<!-- notes -->` closes the per-finding part. What is true of the *session* — method,
   cost, what would settle an open question — goes there and is rendered below the
   table, rather than hung off whichever finding happened to be last.
+- `<!-- exclude: 1, 2, 4 -->` names ledger lines that are **not about the dataset**.
+  The ledger is append-only, so a measurement taken against the checkout stays in the
+  record forever; the report declines to show it and says how many it left out and
+  why. The rule behind it — `.git`, `.dvc`, `pin.json` — is declared once, in
+  `data_scout/exclusions.py`, and the frame, the toolbelt's walks and the dataset
+  index all apply it, so nothing measures the wrapper in the first place.
 
 Nothing is lossy: a report with no markers still renders (lede, table, prose), and a
 marker naming a line the ledger does not have is shown under *"Commentary with no
