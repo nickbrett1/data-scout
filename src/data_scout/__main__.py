@@ -21,7 +21,7 @@ would be a second service (``data-scout-genproj-scaffold`` §6.2):
     with no directory listing of the workspace. The file is served as written,
     plus the reading chrome (nav bar, current stylesheet) when it was rendered
     before that chrome existed — a presentational splice at the edge, never a
-    rewrite of the frozen file (``reading_chrome``).
+    rewrite of the frozen file (``render.with_chrome``).
 ``/report/index.json``
     The same index as JSON, for anything that is not a phone.
 ``/a2a``
@@ -40,7 +40,6 @@ workspace it already owns.
 from __future__ import annotations
 
 import os
-import re
 from pathlib import Path
 from typing import Any
 
@@ -334,40 +333,6 @@ def a2a(request: Request) -> Response:
     return _json({"error": "not_implemented", "detail": _A2A_DETAIL}, status=501)
 
 
-_BODY_OPEN = re.compile(r"<body[^>]*>", re.IGNORECASE)
-
-
-def reading_chrome(html: str) -> str:
-    """Give a frozen artifact the way back, without rewriting it on disk.
-
-    A report rendered before this service had a nav bar is still a frozen file,
-    so the chrome is spliced at the edge rather than by re-rendering: the
-    current stylesheet goes last in ``<head>`` so its rules win over the older
-    copy frozen into the document, and the nav bar goes first in ``<body>``.
-    Anything already carrying the nav is returned untouched, and a fragment
-    that is not a whole document (no ``<head>`` or ``<body>``) is left alone
-    rather than guessed at.
-    """
-    if render.NAV_MARKER in html:
-        return html
-    if "</head>" not in html and not _BODY_OPEN.search(html):
-        return html
-
-    sheet = f"<style>\n{render.stylesheet()}\n</style>"
-    opened = _BODY_OPEN.search(html)
-    if "</head>" in html:
-        html = html.replace("</head>", f"{sheet}\n</head>", 1)
-    elif opened is not None:
-        html = html[: opened.start()] + sheet + "\n" + html[opened.start() :]
-    else:
-        html = sheet + html
-
-    opened = _BODY_OPEN.search(html)
-    if opened is None:
-        return render.NAV_HTML + html
-    return html[: opened.end()] + "\n" + render.NAV_HTML + html[opened.end() :]
-
-
 def artifact(request: Request) -> Response:
     dataset_id = request.path_params["dataset_id"]
     filename = request.path_params["filename"]
@@ -375,7 +340,7 @@ def artifact(request: Request) -> Response:
     if found is None:
         return _json({"error": "not_found", "path": request.url.path}, status=404)
     html = found.read_text(encoding="utf-8", errors="replace")
-    return HTMLResponse(reading_chrome(html), headers={"Cache-Control": "no-cache"})
+    return HTMLResponse(render.with_chrome(html), headers={"Cache-Control": "no-cache"})
 
 
 def icon(request: Request) -> Response:

@@ -476,3 +476,54 @@ def test_the_rendered_report_inlines_the_current_stylesheet(dataset_workspace, c
     assert "--measure" in html
     assert '<nav class="data-scout-nav">' in html
     assert 'class="data-scout-toc"' in html
+
+
+# --------------------------------------------------------------------------
+# one document, not a document inside a document
+# --------------------------------------------------------------------------
+
+
+def test_with_chrome_dresses_a_whole_document_once():
+    document = (
+        "<!DOCTYPE html><html><head><style>x</style></head>"
+        "<body class=\"jp-Notebook\"><h1>t</h1></body></html>"
+    )
+    dressed = render.with_chrome(document, meta="data-scout · x")
+
+    assert dressed.count(render.NAV_MARKER) == 1
+    assert dressed.count("<!DOCTYPE html>") == 1
+    assert dressed.count("<html") == 1
+    assert dressed.count("<body") == 1
+    # Our sheet is last in <head> so it wins; nbconvert's stays for the things
+    # this sheet does not style. The chrome is first in <body>.
+    assert dressed.index("--measure") < dressed.index("</head>")
+    assert "<style>x</style>" in dressed
+    assert dressed.index("<body") < dressed.index(render.NAV_MARKER)
+    assert 'class="data-scout-meta">data-scout · x</div>' in dressed
+    # Idempotent: serving it again changes nothing.
+    assert render.with_chrome(dressed, meta="data-scout · x") == dressed
+
+
+def test_a_fragment_is_not_dressed_because_it_is_not_a_document():
+    assert render.with_chrome("<html>report</html>") == "<html>report</html>"
+
+
+def test_the_notebook_rendition_is_one_document_not_two(dataset_workspace, capsys):
+    """nbconvert returns a whole document; wrapping it nested `<html>` in `<body>`.
+
+    That left two doctypes, and the nav bar above the inner document rather than
+    inside the page it navigates.
+    """
+    build_session(dataset_workspace, cells=[APPEND_CELL])
+    assert render.main([DATASET_ID, "--quiet"]) == 0, capsys.readouterr().err
+
+    html = workspace.artifact_path(DATASET_ID, "session-1.html").read_text(encoding="utf-8")
+    assert html.count("<!DOCTYPE html>") == 1
+    assert html.count("<html") == 1
+    assert html.count("<body") == 1
+    assert html.count("</html>") == 1
+    # Inside the body it belongs to, and after the notebook's own markup starts.
+    assert html.index("<body") < html.index(render.NAV_MARKER)
+    # nbconvert's output rendering survives; ours is the last sheet in <head>.
+    assert "jp-Notebook" in html
+    assert html.rindex("--measure") < html.index("</head>")

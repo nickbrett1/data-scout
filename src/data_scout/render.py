@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import copy
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -339,29 +340,60 @@ def render_markdown(markdown: str, *, title: str, meta: str = "") -> str:
     )
 
 
+_BODY_OPEN = re.compile(r"<body[^>]*>", re.IGNORECASE)
+
+
+def with_chrome(document: str, *, meta: str = "") -> str:
+    """Splice the reading chrome into a whole HTML document somebody else wrote.
+
+    ``nbconvert`` hands back a complete document — doctype, ``<head>``, its own
+    stylesheets, ``<body class="jp-Notebook">`` — so wrapping it in
+    :data:`_HTML_TEMPLATE` nests one document inside another: two doctypes, and
+    the nav bar stranded above the inner ``<html>``. This edits the document in
+    place instead: the nav bar and meta line go first in ``<body>``, and our
+    sheet goes **last** in ``<head>`` so it wins over nbconvert's while leaving
+    nbconvert's rules there for the things this sheet does not style (syntax
+    colours, ``--jp-*`` variables, output rendering).
+
+    Idempotent, and deliberately idle on a fragment: a document already carrying
+    the nav is returned untouched, and so is a file with no ``<head>`` and no
+    ``<body>`` — that is not a document, and guessing at it would corrupt it.
+    Used for the notebook rendition and, at serve time, for a report rendered
+    before the chrome existed (``__main__.artifact``).
+    """
+    if NAV_MARKER in document:
+        return document
+    opened = _BODY_OPEN.search(document)
+    if "</head>" not in document and opened is None:
+        return document
+
+    sheet = f"<style>\n{stylesheet()}\n</style>"
+    if "</head>" in document:
+        document = document.replace("</head>", f"{sheet}\n</head>", 1)
+    elif opened is not None:
+        document = document[: opened.start()] + sheet + "\n" + document[opened.start() :]
+    else:
+        document = sheet + document
+
+    opened = _BODY_OPEN.search(document)
+    chrome = NAV_HTML
+    if meta:
+        chrome += f'\n<div class="data-scout-meta">{_escape(meta)}</div>'
+    if opened is None:
+        return chrome + document
+    return document[: opened.end()] + "\n" + chrome + document[opened.end() :]
+
+
 def render_notebook(notebook: Any, *, title: str, meta: str = "") -> str:
     """An executed ``.ipynb`` -> standalone HTML, code blocks scrolling not clipping."""
     from nbconvert import HTMLExporter
 
     exporter = HTMLExporter(template_name="lab")
     body, _resources = exporter.from_notebook_node(notebook, resources={"metadata": {"name": title}})
-    # One stylesheet for both renditions: replace nbconvert's bundle with ours so
-    # the report and the appendix look like one document family.
-    start = body.find("<style")
-    end = body.find("</style>", start)
-    injected = f"<style>\n{stylesheet()}\n</style>"
-    if start != -1 and end != -1:
-        body = body[:start] + injected + body[end + len("</style>") :]
-    else:
-        body = injected + body
-    return _HTML_TEMPLATE.format(
-        title=_escape(title),
-        css=stylesheet(),
-        meta=_escape(meta),
-        nav=NAV_HTML,
-        toc="",
-        body=body,
-    )
+    # The exporter's own document, dressed — never wrapped. One stylesheet for
+    # both renditions: ours lands last, so the report and the appendix read like
+    # one document family without losing nbconvert's output rendering.
+    return with_chrome(body, meta=meta)
 
 
 def _escape(text: str) -> str:
