@@ -453,5 +453,8 @@ def test_the_brief_leads_the_dataset_page(server, dataset_workspace):
     assert status == 200
     assert names[0] == f"brief-{DATASET_ID}.html"
     assert "What to run on this dataset" in body
+    # the remaining artifacts say what they are, in the order they are read
+    assert "The evidence — report of 2026-10-26" in body
+    assert "How it was measured — session 1" in body
     # the call to action replaces its own entry in the list
     assert body.count(f"brief-{DATASET_ID}.html") == 1

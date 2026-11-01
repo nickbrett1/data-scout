@@ -238,6 +238,23 @@ def _order_artifacts(names: list[str]) -> list[str]:
     return sorted(names, key=rank)
 
 
+def _artifact_label(name: str, dataset_id: str) -> str:
+    """What an artifact *is* to a reader, rather than what it is called on disk.
+
+    The three layers read in order — decision, evidence, provenance — and the
+    dataset page is the one place a reader sees all three, so the list says which
+    is which instead of printing three filenames and leaving the ordering to them.
+    """
+    stem = name.removesuffix(".html")
+    if stem == f"report-{dataset_id}":
+        return "The evidence — every reading, and the line it came from"
+    if stem.startswith("report-"):
+        return f"The evidence — report of {stem[len('report-') :]}"
+    if stem.startswith("session-"):
+        return f"How it was measured — session {stem[len('session-') :]}"
+    return stem
+
+
 def _dataset_html(dataset: dict[str, Any]) -> list[str]:
     """One dataset: what it is, what it costs to look, and what has been made."""
     name = dataset["name"]
@@ -305,8 +322,11 @@ def _dataset_html(dataset: dict[str, Any]) -> list[str]:
         )
     if rest:
         parts.append("<ul>")
-        for label, href in rest:
-            parts.append(f'<li><a href="{_escape(href)}">{_escape(label)}</a></li>')
+        for name, href in rest:
+            parts.append(
+                f'<li><a href="{_escape(href)}">'
+                f"{_escape(_artifact_label(name, dataset_id))}</a></li>"
+            )
         parts.append("</ul>")
     else:
         parts.append('<p class="muted">No reports yet.</p>')
