@@ -22,7 +22,11 @@ from data_scout.tools.cluster_topics import cluster_topics
 from data_scout.tools.embed_sample import embed_sample
 from data_scout.tools.exif_census import exif_census
 from data_scout.tools.file_census import file_census
-from data_scout.tools.findings_append import append_many, findings_append
+from data_scout.tools.findings_append import (
+    append_many,
+    derive_finding,
+    findings_append,
+)
 from data_scout.tools.image_inventory import image_inventory
 from data_scout.tools.measurement_register import measurement_register
 from data_scout.tools.near_dup_docs import near_dup_docs
@@ -37,6 +41,7 @@ __all__ = [
     "cached_parts",
     "candidate_density",
     "cluster_topics",
+    "derive_finding",
     "embed_sample",
     "exif_census",
     "file_census",
