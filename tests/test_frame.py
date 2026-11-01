@@ -107,7 +107,7 @@ def test_the_frame_identity_is_unchanged_when_dvc_rewrites_its_lockfile(
     assert after.checkout.bytes == before.checkout.bytes
 
     # The exclusion is named on the frame, and the excluded scratch is counted.
-    assert set(after.exclusions) == {"git-internals", "dvc-internals"}
+    assert set(after.exclusions) == {"git-internals", "dvc-internals", "dataset-pin"}
     assert after.checkout.excluded_files == 2  # .dvc/config + .dvc/tmp/lock
 
     # Control: the whole-tree rule this replaces *does* move with the lockfile.
@@ -123,13 +123,13 @@ def test_the_exclusion_set_is_not_a_caller_option(dataset_with_payload):
 
 def test_the_schema_version_is_emitted_by_the_measurer(dataset_with_payload):
     measurement = frame.measure_frame(DATASET_ID, root=dataset_with_payload)
-    assert measurement.schema_version == frame.FRAME_SCHEMA_VERSION == 2
+    assert measurement.schema_version == frame.FRAME_SCHEMA_VERSION == 3
     # And it travels onto the ledger line without the caller supplying it.
     record = frame.identity_finding(
         measurement, dataset_id=DATASET_ID, session=1, promoted=False, retire_reason="test"
     )
-    assert record["tool_version"] == "2"
-    assert record["params"]["frame_schema"] == 2
+    assert record["tool_version"] == "3"
+    assert record["params"]["frame_schema"] == 3
 
 
 def test_the_written_frame_records_what_was_included_and_excluded(dataset_with_payload):
@@ -137,7 +137,7 @@ def test_the_written_frame_records_what_was_included_and_excluded(dataset_with_p
     path = frame.write_frame(DATASET_ID, measurement, lenses=["text", "structure"])
     text = path.read_text(encoding="utf-8")
 
-    assert "frame_schema: 2" in text
+    assert "frame_schema: 3" in text
     assert "unit: files" in text
     assert "  - git-internals" in text
     assert "  - dvc-internals" in text
@@ -145,8 +145,8 @@ def test_the_written_frame_records_what_was_included_and_excluded(dataset_with_p
     assert measurement.identity.manifest in text
 
     read_back = workspace.read_frame(DATASET_ID)
-    assert read_back.schema_version == 2
-    assert read_back.exclusions == ("git-internals", "dvc-internals")
+    assert read_back.schema_version == 3
+    assert read_back.exclusions == ("git-internals", "dvc-internals", "dataset-pin")
     assert read_back.identity.scope == measurement.identity.scope
     assert read_back.identity.files == measurement.identity.files
     assert read_back.identity.bytes == measurement.identity.bytes
@@ -204,7 +204,7 @@ def _write_frame_text(text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def test_a_v1_frame_and_a_v2_frame_are_not_comparable(dataset_with_payload):
+def test_a_v1_frame_and_a_v3_frame_are_not_comparable(dataset_with_payload):
     _write_frame_text(V1_FRAME)
     v1 = workspace.read_frame(DATASET_ID)
     assert v1.schema_version == 1
@@ -212,17 +212,17 @@ def test_a_v1_frame_and_a_v2_frame_are_not_comparable(dataset_with_payload):
 
     measurement = frame.measure_frame(DATASET_ID, root=dataset_with_payload)
     _write_frame_text(frame.render_frame(measurement))
-    v2 = workspace.read_frame(DATASET_ID)
-    assert v2.schema_version == 2
+    v3 = workspace.read_frame(DATASET_ID)
+    assert v3.schema_version == 3
 
-    result = frame.compare_frames(v1, v2)
+    result = frame.compare_frames(v1, v3)
     assert result.comparable is False
     assert result.delta is None
     assert "different frame rules" in result.reason
-    assert "v1" in result.reason and "v2" in result.reason
+    assert "v1" in result.reason and "v3" in result.reason
 
 
-def test_two_v2_frames_are_comparable_and_report_only_the_identity_delta(
+def test_two_v3_frames_are_comparable_and_report_only_the_identity_delta(
     dataset_with_payload,
 ):
     root = dataset_with_payload

@@ -45,12 +45,14 @@ from data_scout import workspace
 #: The version of the *frame schema* this module emits. A frame without a
 #: ``frame_schema`` key is version 1 (the phase-1 record on ``vg-books-2026-10``
 #: is one). Version 2 adds the payload identity, the declared exclusion set and
-#: the checkout figure as separate, labelled facts.
-FRAME_SCHEMA_VERSION = 2
+#: the checkout figure as separate, labelled facts. Version 3 adds the dataset
+#: pin the measurement was taken under, and the ``dataset-pin`` exclusion that
+#: keeps ``pin.json`` out of the checkout figure.
+FRAME_SCHEMA_VERSION = 3
 
 #: Versions this reader understands. A frame from a newer schema fails loudly
 #: rather than being read under rules it was not measured with.
-SUPPORTED_FRAME_SCHEMAS = (1, 2)
+SUPPORTED_FRAME_SCHEMAS = (1, 2, 3)
 
 #: The tool name on a frame identity line in ``findings.jsonl``. Not a belt
 #: instrument — the frame is part of the substrate, not a sixteenth name.
@@ -75,6 +77,25 @@ class FrameSchemaError(workspace.WorkspaceError):
 
 class FrameMeasureError(RuntimeError):
     """A frame cannot be written without silently replacing an existing one."""
+
+
+class PinStale(FrameMeasureError):
+    """The pin's files/bytes disagree with the payload just measured.
+
+    A pin that does not describe the bytes in front of it is not a weaker pin,
+    it is a false claim, and both the frame and the ledger are append-only. Fail
+    before writing, never after (D5).
+
+    The residual hole, stated rather than papered over: two commits whose trees
+    have the *same* file count and total bytes are indistinguishable to this
+    check (``frame.py`` deliberately does not hash content — ``MANIFEST_RULE``
+    is names and sizes only). So a re-commit mid-session that changes bytes
+    without changing shape would pass. Mitigations, all already in place: §6.6
+    of the store order forbids recording a pin from a dirty tree;
+    ``write_frame`` refuses to replace an existing frame without an
+    ``overwrite_reason``; and a re-commit during a session is a human act that
+    ought to be followed by a frame re-measure.
+    """
 
 
 @dataclass(frozen=True)
@@ -106,6 +127,15 @@ FRAME_EXCLUSIONS: tuple[Exclusion, ...] = (
         why=(
             "DVC rewrites .dvc/tmp/lock and .dvc/tmp/rwlock.lock on ordinary "
             "DVC activity; measured 9 -> 8 bytes with the payload untouched"
+        ),
+    ),
+    Exclusion(
+        name="dataset-pin",
+        path="pin.json",
+        why=(
+            "written by /srv/bin/datasets on the host when a pin is recorded; it is a "
+            "claim about the payload, not part of it, and it changes on ordinary "
+            "pinning activity with the payload untouched"
         ),
     ),
 )
@@ -148,6 +178,7 @@ class FrameMeasurement:
     identity: TreeIdentity
     checkout: TreeIdentity
     measured: str
+    pin: workspace.DatasetPin | None
 
     @property
     def exclusions(self) -> tuple[str, ...]:
@@ -275,14 +306,33 @@ def measure_frame(dataset_id: str, *, root: Path | None = None) -> FrameMeasurem
         root = workspace.dataset_path(dataset_id)
     root = Path(root)
 
+    identity = measure_tree(root, scope=IDENTITY_SCOPE)
+    checkout = measure_tree(root, scope=CHECKOUT_SCOPE)
+
+    # The one place a pin is read for a frame. ``read_pin`` substitutes its
+    # ``root`` for the datasets root, and ``root`` here is the dataset
+    # directory, so the pin is read from its parent — the fixture's pin beside
+    # the fixture's payload, the real pin beside the real payload.
+    pin = workspace.read_pin(dataset_id, root=root.parent)
+    if pin is not None and (
+        pin.dataset_files != identity.files or pin.dataset_bytes != identity.bytes
+    ):
+        raise PinStale(
+            f"pin at {root / workspace.PIN_FILENAME} says {pin.dataset_files} "
+            f"files / {pin.dataset_bytes} B but the payload measured "
+            f"{identity.files} files / {identity.bytes} B; the pin describes "
+            "different bytes than this session measured"
+        )
+
     return FrameMeasurement(
         dataset_id=dataset_id,
         # Emitted here, by the code that measured it. Never a caller field.
         schema_version=FRAME_SCHEMA_VERSION,
         unit="files",
-        identity=measure_tree(root, scope=IDENTITY_SCOPE),
-        checkout=measure_tree(root, scope=CHECKOUT_SCOPE),
+        identity=identity,
+        checkout=checkout,
         measured=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        pin=pin,
     )
 
 
@@ -299,7 +349,8 @@ def render_frame(
     created: str | None = None,
     supersedes_reason: str | None = None,
 ) -> str:
-    """Render a v2 ``frame.md``. The exclusion set is written down, not implied.
+    """Render a v3 ``frame.md``. The exclusion set and the pin are written down,
+    not implied.
 
     ``supersedes_reason`` is written only when an existing frame is replaced, so
     the destruction of the old text is documented on the same disk as the new
@@ -307,6 +358,7 @@ def render_frame(
     being the frame, not whether the new one is better.
     """
     created = created or measurement.measured[:10]
+    pin = measurement.pin
     lines = [
         "---",
         f"dataset_id: {measurement.dataset_id}",
@@ -324,6 +376,11 @@ def render_frame(
         f"checkout_manifest: {measurement.checkout.manifest}",
         f"manifest_rule: {MANIFEST_RULE}",
         f"created: {created}",
+        f"dataset_pinned: {'true' if pin else 'false'}",
+        f"dataset_commit: {pin.dataset_commit if pin else 'null'}",
+        f"dataset_manifest_hash: {pin.dataset_manifest_hash if pin else 'null'}",
+        f"dataset_files: {pin.dataset_files if pin else 'null'}",
+        f"dataset_bytes: {pin.dataset_bytes if pin else 'null'}",
     ]
     if supersedes_reason:
         lines.append(f"supersedes_reason: {supersedes_reason}")
@@ -438,6 +495,13 @@ def identity_finding(
         "checkout_bytes": measurement.checkout.bytes,
         "checkout_manifest": measurement.checkout.manifest,
         "checkout_excluded_files": measurement.checkout.excluded_files,
+        "dataset_pinned": measurement.pin is not None,
+        "dataset_commit": measurement.pin.dataset_commit if measurement.pin else None,
+        "dataset_manifest_hash": (
+            measurement.pin.dataset_manifest_hash if measurement.pin else None
+        ),
+        "dataset_files": measurement.pin.dataset_files if measurement.pin else None,
+        "dataset_bytes": measurement.pin.dataset_bytes if measurement.pin else None,
     }
     record: dict[str, Any] = {
         "dataset_id": dataset_id,
@@ -477,6 +541,17 @@ class Comparison:
     right_schema: int
     reason: str | None = None
     delta: dict[str, Any] | None = None
+    #: Populated only when both frames are pinned to different commits. It is a
+    #: separate field, never folded into ``reason``: a reason is prose for a
+    #: human, and a pin move is a fact a future prune must be able to read.
+    pin_changed: dict[str, str] | None = None
+
+
+def _pin_commit(pin: workspace.FramePin | None) -> str | None:
+    """The commit a frame's pin names, or ``None`` when the frame is unpinned."""
+    if pin is None or not pin.pinned:
+        return None
+    return pin.dataset_commit
 
 
 def compare_frames(left: workspace.Frame, right: workspace.Frame) -> Comparison:
@@ -518,10 +593,27 @@ def compare_frames(left: workspace.Frame, right: workspace.Frame) -> Comparison:
                 "(an identity scope and manifest are required)"
             ),
         )
+    left_commit = _pin_commit(left.pin)
+    right_commit = _pin_commit(right.pin)
+    if (left_commit is None) != (right_commit is None):
+        return Comparison(
+            comparable=False,
+            left_schema=left.schema_version,
+            right_schema=right.schema_version,
+            reason=(
+                "not comparable: one frame is pinned and the other is not, so one "
+                "side does not know which bytes it measured; a delta would be "
+                "between provenance states, not data"
+            ),
+        )
+    pin_changed: dict[str, str] | None = None
+    if left_commit is not None and right_commit is not None and left_commit != right_commit:
+        pin_changed = {"from": left_commit, "to": right_commit}
     return Comparison(
         comparable=True,
         left_schema=left.schema_version,
         right_schema=right.schema_version,
+        pin_changed=pin_changed,
         delta={
             "scope": left.identity.scope,
             "files": right.identity.files - left.identity.files,

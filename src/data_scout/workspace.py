@@ -303,6 +303,23 @@ class FrameIdentity:
 
 
 @dataclass(frozen=True)
+class FramePin:
+    """The pin as a v3 frame records it, read back without a datasets mount.
+
+    Deliberately **not** :class:`DatasetPin`: reading a frame is a workspace
+    read, and must not require the read-only datasets root to be mounted. A
+    frame written for an unversioned dataset records ``pinned=False`` with null
+    fields — "unpinned" is a record, not a gap.
+    """
+
+    pinned: bool
+    dataset_commit: str | None = None
+    dataset_manifest_hash: str | None = None
+    dataset_files: int | None = None
+    dataset_bytes: int | None = None
+
+
+@dataclass(frozen=True)
 class Frame:
     """The dataset frame written in phase 1 (``data-scout-recipe`` phase 1).
 
@@ -328,6 +345,7 @@ class Frame:
     exclusions: tuple[str, ...] = ()
     identity: FrameIdentity | None = None
     checkout: FrameIdentity | None = None
+    pin: FramePin | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -461,6 +479,11 @@ def read_frame(dataset_id: str) -> Frame:
         "checkout_bytes",
         "checkout_manifest",
         "manifest_rule",
+        "dataset_pinned",
+        "dataset_commit",
+        "dataset_manifest_hash",
+        "dataset_files",
+        "dataset_bytes",
     }
     return Frame(
         dataset_id=declared,
@@ -475,6 +498,7 @@ def read_frame(dataset_id: str) -> Frame:
         exclusions=tuple(str(item) for item in declared_exclusions),
         identity=_frame_identity(meta, "identity"),
         checkout=_frame_identity(meta, "checkout"),
+        pin=_frame_pin(meta, frame_file),
         extra={k: v for k, v in meta.items() if k not in known},
     )
 
@@ -491,6 +515,53 @@ def _frame_identity(meta: dict[str, Any], prefix: str) -> FrameIdentity | None:
         files=files if isinstance(files, int) and not isinstance(files, bool) else 0,
         bytes=size if isinstance(size, int) and not isinstance(size, bool) else 0,
         manifest=str(meta.get(f"{prefix}_manifest") or ""),
+    )
+
+
+def _frame_pin(meta: dict[str, Any], frame_file: Path) -> FramePin | None:
+    """Read the v3 frame's pin block, or ``None`` for a frame that has none.
+
+    A v1/v2 frame carries no pin keys, and that is a real difference: it was
+    measured before the pin existed. A v3 frame **always** writes
+    ``dataset_pinned`` so that "unpinned" is a record rather than a gap.
+    """
+    if "dataset_pinned" not in meta:
+        return None
+    pinned = meta.get("dataset_pinned")
+    if not isinstance(pinned, bool):
+        raise WorkspaceError(
+            f"{frame_file} declares dataset_pinned {pinned!r}, which is not a "
+            "boolean; a frame cannot say half of whether it was pinned"
+        )
+    commit = meta.get("dataset_commit")
+    manifest = meta.get("dataset_manifest_hash")
+    files = meta.get("dataset_files")
+    size = meta.get("dataset_bytes")
+    for key, value in (
+        ("dataset_commit", commit),
+        ("dataset_manifest_hash", manifest),
+    ):
+        if value is not None and not isinstance(value, str):
+            raise WorkspaceError(
+                f"{frame_file} declares {key} {value!r}, which is not a string or null"
+            )
+    for key, value in (("dataset_files", files), ("dataset_bytes", size)):
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+            raise WorkspaceError(
+                f"{frame_file} declares {key} {value!r}, which is not an integer or null"
+            )
+    if pinned and (not commit or files is None or size is None):
+        raise WorkspaceError(
+            f"{frame_file} says dataset_pinned: true but has no complete pin "
+            "(dataset_commit, dataset_files and dataset_bytes are required when "
+            "pinned); refusing to read a pin that does not name its bytes"
+        )
+    return FramePin(
+        pinned=pinned,
+        dataset_commit=commit,
+        dataset_manifest_hash=manifest,
+        dataset_files=files,
+        dataset_bytes=size,
     )
 
 
