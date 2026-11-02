@@ -274,9 +274,11 @@ def _dataset_html(dataset: dict[str, Any]) -> list[str]:
         # whole tree, because "12 files" beside a corpus of 8 is a number about
         # wrapper. The wrapper is named rather than counted away, so a reader can
         # tell "not measured yet" from "not corpus".
-        scope = dataset.get("payload_scope")
         if dataset.get("payload_files"):
-            facts = [f'{dataset["payload_files"]:,} files' + (f" in {_escape(scope)}/" if scope else "")]
+            # No scope in the sentence. "in data/" is the frame's rule for how the
+            # payload is bounded, and a reader counting books does not care which
+            # directory the books are in. The scope stays in the JSON record.
+            facts = [f'{dataset["payload_files"]:,} files']
             extensions = inventory.format_extensions(dataset["payload_extensions"])
             if extensions:
                 facts.append(extensions)
@@ -301,8 +303,8 @@ def _dataset_html(dataset: dict[str, Any]) -> list[str]:
             shown = ", ".join(_escape(name) for name in wrapper[:6])
             more = f" and {len(wrapper) - 6} more" if len(wrapper) > 6 else ""
             parts.append(
-                f'<p class="stats muted">{len(wrapper)} file'
-                f'{"" if len(wrapper) == 1 else "s"} beside the payload '
+                f'<p class="stats muted">{len(wrapper)} other file'
+                f'{"" if len(wrapper) == 1 else "s"} here '
                 f'{"is" if len(wrapper) == 1 else "are"} not corpus: {shown}{more}</p>'
             )
 
