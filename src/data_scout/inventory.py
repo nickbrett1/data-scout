@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from data_scout.exclusions import EXCLUDED_DIRS, EXCLUDED_FILES
-from data_scout.frame import ledger_frame_schemas
+from data_scout.frame import IDENTITY_SCOPE, ledger_frame_schemas
 from data_scout.ledger import Ledger
 from data_scout.workspace import (
     WorkspaceError,
@@ -63,6 +63,18 @@ class DatasetSummary:
     directories: int = 0
     bytes: int = 0
     extensions: tuple[tuple[str, int], ...] = ()
+    #: The payload: what the frame's identity scope covers (``data/``), which is
+    #: what the instruments look at. ``files`` above is the whole tree, and the
+    #: difference is the dataset's own wrapper — a DVC pointer, a README, ignore
+    #: files — which is on disk but is not corpus. Two counts, both named, so the
+    #: index cannot report "12 files" about a corpus of 8 books.
+    payload_scope: str = ""
+    payload_files: int = 0
+    payload_bytes: int = 0
+    payload_extensions: tuple[tuple[str, int], ...] = ()
+    #: Root-level files outside the payload, by name. Short on purpose: these are
+    #: a handful of files that a reader should be able to see and dismiss.
+    wrapper_files: tuple[str, ...] = ()
     newest: str | None = None
     frame: bool = False
     #: Which frame schema versions appear in this dataset's ledger. Empty means
@@ -91,6 +103,11 @@ class DatasetSummary:
             "directories": self.directories,
             "bytes": self.bytes,
             "extensions": dict(self.extensions),
+            "payload_scope": self.payload_scope,
+            "payload_files": self.payload_files,
+            "payload_bytes": self.payload_bytes,
+            "payload_extensions": dict(self.payload_extensions),
+            "wrapper_files": list(self.wrapper_files),
             "newest": self.newest,
             "frame": self.frame,
             "frame_schemas": list(self.frame_schemas),
@@ -138,9 +155,16 @@ def summarize(dataset_id: str, path: Path, *, max_entries: int = MAX_SCAN_ENTRIE
     validate_dataset_id(dataset_id)
     files = directories = total = 0
     extensions: Counter[str] = Counter()
+    payload_files = payload_total = 0
+    payload_extensions: Counter[str] = Counter()
+    wrapper_files: list[str] = []
     newest: float | None = None
     truncated = False
     error: str | None = None
+    #: The payload is the frame's identity scope, so the index and the frame
+    #: count the same thing. A dataset without that directory is its own payload.
+    payload_root = path / IDENTITY_SCOPE
+    has_payload = payload_root.is_dir()
 
     stack: list[Path] = [path]
     while stack and not truncated:
@@ -172,6 +196,14 @@ def summarize(dataset_id: str, path: Path, *, max_entries: int = MAX_SCAN_ENTRIE
                         newest = stat.st_mtime if newest is None else max(newest, stat.st_mtime)
                         suffix = Path(entry.name).suffix.lower() or "(none)"
                         extensions[suffix] += 1
+                        if not has_payload or current == payload_root or payload_root in current.parents:
+                            payload_files += 1
+                            payload_total += stat.st_size
+                            payload_extensions[suffix] += 1
+                        elif current == path:
+                            # Beside the payload, not in it: a DVC pointer, the
+                            # dataset's README, an ignore file.
+                            wrapper_files.append(entry.name)
                 except OSError:
                     # A file can vanish or be unreadable mid-walk; the count is
                     # a triage fact, not a record, so skipping it is honest.
@@ -188,6 +220,11 @@ def summarize(dataset_id: str, path: Path, *, max_entries: int = MAX_SCAN_ENTRIE
         directories=directories,
         bytes=total,
         extensions=tuple(extensions.most_common(TOP_EXTENSIONS)),
+        payload_scope=IDENTITY_SCOPE if has_payload else "",
+        payload_files=payload_files,
+        payload_bytes=payload_total,
+        payload_extensions=tuple(payload_extensions.most_common(TOP_EXTENSIONS)),
+        wrapper_files=tuple(sorted(wrapper_files)),
         newest=_iso_date(newest),
         frame=frame_file.is_file(),
         frame_schemas=_frame_schemas(dataset_id),

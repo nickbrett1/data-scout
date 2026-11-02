@@ -153,8 +153,9 @@ def test_the_index_lists_datasets_that_are_available_to_scout(server, roots):
     assert "waiting-dataset" in body
     assert "Available to scout" in body
     assert "no frame.md yet" in body
+    # No data/ directory here, so the tree is its own payload: the card counts
+    # the files rather than a directory that is not a payload scope.
     assert "2 files" in body
-    assert "1 dir" in body
     assert "txt 1, pdf 1" in body
     assert "No reports yet." in body
 
@@ -458,3 +459,29 @@ def test_the_brief_leads_the_dataset_page(server, dataset_workspace):
     assert "How it was measured — session 1" in body
     # the call to action replaces its own entry in the list
     assert body.count(f"brief-{DATASET_ID}.html") == 1
+
+
+def test_the_index_counts_the_corpus_not_the_wrapper_beside_it(server, roots):
+    """A corpus of 2 PDFs is not "6 files".
+
+    vg-books-2026-10 read as "12 files ... dvc 1, (none) 2, md 1" beside eight
+    books, because the index counted the whole tree. A DVC pointer, a README and
+    an ignore file are on disk and are not corpus, so the card leads with the
+    payload and names the wrapper instead of counting it in.
+    """
+    dataset = roots.datasets / "wrapper-dataset"
+    (dataset / "data").mkdir(parents=True)
+    (dataset / "data" / "a.pdf").write_bytes(b"%PDF-1.4")
+    (dataset / "data" / "b.pdf").write_bytes(b"%PDF-1.4")
+    (dataset / "data.dvc").write_text("outs\n", encoding="utf-8")
+    (dataset / "README.md").write_text("# books\n", encoding="utf-8")
+    (dataset / ".gitignore").write_text("/data\n", encoding="utf-8")
+
+    status, _content_type, body = get(server, "/report/")
+
+    assert status == 200
+    assert "2 files in data/" in body
+    assert "pdf 2" in body
+    assert "3 files beside the payload are not corpus" in body
+    assert ".gitignore, README.md, data.dvc" in body
+    assert "6 files" not in body

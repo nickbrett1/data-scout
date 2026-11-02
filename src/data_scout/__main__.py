@@ -270,19 +270,41 @@ def _dataset_html(dataset: dict[str, Any]) -> list[str]:
             "root right now.</p>"
         )
     else:
-        facts = [
-            f'{dataset["files"]:,} files',
-            f'{dataset["directories"]:,} dirs',
-            inventory.format_bytes(dataset["bytes"]),
-        ]
-        extensions = inventory.format_extensions(dataset["extensions"])
-        if extensions:
-            facts.append(extensions)
+        # Lead with the payload — what the instruments see — and never with the
+        # whole tree, because "12 files" beside a corpus of 8 is a number about
+        # wrapper. The wrapper is named rather than counted away, so a reader can
+        # tell "not measured yet" from "not corpus".
+        scope = dataset.get("payload_scope")
+        if dataset.get("payload_files"):
+            facts = [f'{dataset["payload_files"]:,} files' + (f" in {_escape(scope)}/" if scope else "")]
+            extensions = inventory.format_extensions(dataset["payload_extensions"])
+            if extensions:
+                facts.append(extensions)
+            facts.append(inventory.format_bytes(dataset["payload_bytes"]))
+        else:
+            facts = [
+                f'{dataset["files"]:,} files',
+                f'{dataset["directories"]:,} dirs',
+                inventory.format_bytes(dataset["bytes"]),
+            ]
+            extensions = inventory.format_extensions(dataset["extensions"])
+            if extensions:
+                facts.append(extensions)
         if dataset["newest"]:
             facts.append(f'newest {_escape(dataset["newest"])}')
         if dataset["truncated"]:
             facts.append(f'partial — first {inventory.MAX_SCAN_ENTRIES:,} entries')
         parts.append(f'<p class="stats">{_escape(" · ".join(facts))}</p>')
+
+        wrapper = dataset.get("wrapper_files") or []
+        if wrapper:
+            shown = ", ".join(_escape(name) for name in wrapper[:6])
+            more = f" and {len(wrapper) - 6} more" if len(wrapper) > 6 else ""
+            parts.append(
+                f'<p class="stats muted">{len(wrapper)} file'
+                f'{"" if len(wrapper) == 1 else "s"} beside the payload '
+                f'{"is" if len(wrapper) == 1 else "are"} not corpus: {shown}{more}</p>'
+            )
 
     if dataset["scouted"]:
         status = "Scouted"
