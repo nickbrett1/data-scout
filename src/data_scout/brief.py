@@ -512,7 +512,14 @@ def _documents_html(
 _MARKS = {"pass": "\u2713", "fail": "\u2717", "unknown": "?"}
 
 
-def _cell_html(cell: profiles.Cell) -> str:
+def _cell_html(cell: profiles.Cell, *, cites: bool = True) -> str:
+    """One criterion, evaluated. ``cites`` is off in the brief.
+
+    The brief is the decision and the report is the evidence: a line number next
+    to every reading makes the page that answers "what should I run" read like
+    an index. The report still carries every citation, and /profiles carries the
+    definitions.
+    """
     observed = cell.observed or "not measured"
     detail = ""
     if cell.state == "unknown" and cell.tool:
@@ -526,17 +533,19 @@ def _cell_html(cell: profiles.Cell) -> str:
         f'<span class="mark">{_MARKS[cell.state]}</span>'
         f'<code class="cell-test">{_escape(cell.criterion.describe())}</code>'
         f'<span class="cell-observed">{_escape(observed)}</span>'
-        f"{_cite(cell.lines)}{detail}"
+        f"{_cite(cell.lines) if cites else ''}{detail}"
         "</li>"
     )
 
 
-def _assessment_html(assessment: profiles.Assessment) -> str:
+def _assessment_html(
+    assessment: profiles.Assessment, *, cites: bool = True, definition: bool = True
+) -> str:
     profile = assessment.profile
     # A profile the corpus fits is the news and opens; a disqualified one is one
     # line of information and stays shut.
     opened = " open" if assessment.outcome in ("fits", "partial") else ""
-    favour_cells = "".join(_cell_html(cell) for cell in assessment.favours)
+    favour_cells = "".join(_cell_html(cell, cites=cites) for cell in assessment.favours)
     favours = (
         f'<p class="profile-label">Favours — {assessment.measured_favours} of '
         f"{len(assessment.favours)} measured</p>"
@@ -554,14 +563,25 @@ def _assessment_html(assessment: profiles.Assessment) -> str:
         f'<summary><span class="prof-top"><span class="prof-title">{_escape(profile.title)}</span>'
         f'<span class="badge b-{assessment.outcome}">{_escape(assessment.headline)}</span>'
         '<span class="f-caret"></span></span></summary>'
-        f'<div class="prof-body"><p class="prof-summary">{_escape(profile.summary)}</p>'
-        f'<ul class="cells">{"".join(_cell_html(cell) for cell in assessment.gates)}</ul>'
-        f"{favours}"
-        f'<p class="prof-meta">{score.lstrip(" ·")}'
+        '<div class="prof-body">'
+        + (f'<p class="prof-summary">{_escape(profile.summary)}</p>' if definition else "")
+        + f'<ul class="cells">{"".join(_cell_html(cell, cites=cites) for cell in assessment.gates)}</ul>'
+        + favours
+        + f'<p class="prof-meta">{score.lstrip(" ·")}'
         f'<a href="/profiles#profile-{_escape(profile.id)}">definition</a> · '
         f'catalog v{assessment.catalog_version}</p>'
         "</div></details>"
     )
+
+
+def _short_title(title: str) -> str:
+    """The name before the tagline: ``Literature mining``, not the whole sentence.
+
+    Profile titles carry a clause — "— themes, quotes, and what a chapter says" —
+    that belongs on /profiles where the profile is explained. The brief is a
+    signpost, so it uses the sign.
+    """
+    return title.split(" \u2014 ")[0].strip()
 
 
 def _verdict_html(corpus: Corpus, assessments: Sequence[profiles.Assessment]) -> str:
@@ -594,12 +614,13 @@ def _verdict_html(corpus: Corpus, assessments: Sequence[profiles.Assessment]) ->
     routing = _routing_note(corpus, winner)
     return (
         '<section class="brief-verdict"><p class="brief-label">What to run on this corpus</p>'
-        f"<h1>{_escape(winner.profile.title)}</h1>"
-        f"<p>{_escape(winner.profile.summary)}</p>"
+        f"<h1>{_escape(_short_title(winner.profile.title))}</h1>"
+        # No definition paragraph: what the profile *is* lives on /profiles, and
+        # a page answering "what should I run" should not spend four lines on it.
         f'<p class="verdict-evidence">{gate_readings}</p>'
         f"{routing}"
-        f'<p class="profile-meta">fits {winner.passed} of {winner.profile.gate_total()} gates · '
-        f"catalog v{winner.catalog_version}</p></section>"
+        f'<p class="profile-meta">fits {winner.passed} of {winner.profile.gate_total()} gates'
+        "</p></section>"
     )
 
 
@@ -658,43 +679,40 @@ def _next_measurements(corpus: Corpus, assessments: Sequence[profiles.Assessment
     profiled, total = _document_count(corpus)
     unprofiled = (
         f'<li>a per-document reading for the {total - profiled} documents not yet profiled'
-        f' <span class="brief-cite">partition_doc</span></li>'
+        f' <span class="task-tool">partition_doc</span></li>'
         if total is not None and total > profiled
         else ""
     )
     items = unprofiled + "".join(
         f'<li><code>{_escape(fact)}</code>'
         + (
-            f' <span class="brief-cite">{_escape(tool)}</span>'
+            f' <span class="task-tool">{_escape(tool)}</span>'
             if tool
-            else ' <span class="brief-cite">no instrument yet</span>'
+            else ' <span class="task-tool">no instrument yet</span>'
         )
         + "</li>"
         for fact, tool in sorted(wanted.items())
     )
     return (
-        '<section class="brief-open"><h2>What is still unmeasured</h2>'
-        '<p class="brief-note">Gate criteria nobody has measured, and documents nobody has '
-        "profiled. An unknown never rules a profile out — it is the next session's question, "
-        "and it comes with the instrument that answers it.</p>"
+        '<section class="brief-open"><h2>Still unmeasured</h2>'
+        '<p class="brief-note">An unknown never rules a profile out \u2014 it is the '
+        "next session's question, with the instrument that answers it.</p>"
         f'<ul class="tasks">{items}</ul></section>'
     )
 
 
 def body(corpus: Corpus, assessments: Sequence[profiles.Assessment] | None = None) -> str:
-    """The brief: verdict, the whole matrix, the documents, the plan."""
+    """The brief: the answer, the documents, then everything else if asked.
+
+    The order is the reading order. A page answering "what should I run" does not
+    need to say what literature mining *is* — that is a definition, and it lives
+    on /profiles — and it does not need a line number beside every number,
+    because the report is where a reading is verified. The matrix of all eight
+    profiles stays, collapsed: it is the part a reader checks when they doubt the
+    answer, not the part they came for.
+    """
     scored = tuple(assessments) if assessments is not None else profiles.evaluate(corpus)
     parts = [_verdict_html(corpus, scored)]
-
-    parts.append('<section class="matrix"><h2>Every profile, scored</h2>')
-    parts.append(
-        '<p class="brief-note">All of them, including the ones this corpus rules out: '
-        '<a href="/profiles">what each profile is</a>. '
-        "<strong>✓</strong> measured and true · <strong>✗</strong> measured and false · "
-        "<strong>?</strong> nobody measured it, which never disqualifies.</p>"
-    )
-    parts.extend(_assessment_html(assessment) for assessment in scored)
-    parts.append("</section>")
 
     routes = profiles.document_routes(corpus)
     documents = _documents_html(corpus, routes)
@@ -708,11 +726,22 @@ def body(corpus: Corpus, assessments: Sequence[profiles.Assessment] | None = Non
         )
         parts.append(
             f'<section class="brief-docs"><h2>{heading}</h2>'
-            '<p class="brief-note">Words a page and pictures a page are the routing decision: '
-            f"prose is at least {PROSE_WORDS_PER_PAGE:.0f} words a page, a plate book at least "
-            f"{PLATE_IMAGES_PER_PAGE:.0f} images a page. A dash is a measurement nobody took.</p>"
             f"{_coverage_html(corpus)}{split}{documents}</section>"
         )
+
+    parts.append(
+        f'<details class="matrix"><summary>Every profile, and why the others lost '
+        f"({len(scored)})</summary>"
+        '<p class="brief-note">All of them, including the ones this corpus rules out: '
+        '<a href="/profiles">what each profile is</a>. '
+        "<strong>\u2713</strong> measured and true \u00b7 <strong>\u2717</strong> "
+        "measured and false \u00b7 <strong>?</strong> nobody measured it, which never "
+        "disqualifies.</p>"
+        + "".join(
+            _assessment_html(assessment, cites=False, definition=False) for assessment in scored
+        )
+        + "</details>"
+    )
 
     parts.append(_next_measurements(corpus, scored))
     return "".join(parts)

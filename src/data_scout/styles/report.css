@@ -840,6 +840,31 @@ body.jp-Notebook,
   color: var(--accent);
 }
 
+/* The whole catalogue, collapsed. A reader who trusts the answer never opens
+ * it; a reader who doubts it has the eight profiles in catalogue order. */
+.matrix > summary {
+  padding: 0.7rem 0;
+  border-top: 1px solid var(--border);
+  color: var(--accent);
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.matrix > summary::-webkit-details-marker {
+  display: none;
+}
+
+.matrix > summary::after {
+  content: " \25be";
+  color: var(--faint);
+}
+
+.matrix[open] > summary::after {
+  content: " \25b4";
+}
+
 .verdict-evidence {
   margin: 0.2rem 0 0.4rem;
   color: var(--muted);
@@ -1028,6 +1053,14 @@ body.jp-Notebook,
   font-family: var(--mono);
   font-size: 0.72rem;
   font-weight: 400;
+  white-space: nowrap;
+}
+
+/* An instrument or a gap named on the agenda: a tool, never a citation. */
+.task-tool {
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 0.72rem;
   white-space: nowrap;
 }
 

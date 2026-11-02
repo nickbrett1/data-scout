@@ -204,3 +204,41 @@ def test_the_document_table_cannot_push_a_phone_page_wider():
     assert '<div class="table-scroll"><table class="brief-table">' in html
     for label in ("pages", "words / page", "images / page", "reads as", "goes to"):
         assert f'data-label="{label}"' in html
+
+
+def test_the_brief_does_not_cite_line_numbers():
+    """Citations are the report's job: the brief answers, it does not index.
+
+    A line number beside every reading made the page that answers "what should I
+    run" read like a concordance. The evidence layer keeps them — that is where
+    a reader verifies a number — and the brief says where to find it.
+    """
+    findings = [PROSE_BOOK, HAS_TEXT, tables(parts=8, with_text=0)]
+    html = brief.render_brief(brief.read(findings))
+
+    assert 'class="brief-cite">line' not in html
+    assert 'class="brief-cite"' not in html
+
+
+def test_the_brief_does_not_define_the_profile_it_recommends():
+    """What literature mining *is* lives on /profiles, not in the answer."""
+    findings = [PROSE_BOOK, HAS_TEXT, tables(parts=8, with_text=0)]
+    corpus = brief.read(findings)
+    winner = winner_for(findings)
+    html = brief.render_brief(corpus)
+
+    assert winner is not None
+    assert f"<h1>{winner.profile.title}</h1>" not in html
+    assert winner.profile.summary not in html
+    # the name survives, without the clause that explains it
+    name = winner.profile.title.split(" \u2014 ")[0]
+    assert f"<h1>{name}</h1>" in html
+
+
+def test_the_whole_catalogue_is_behind_a_click():
+    findings = [PROSE_BOOK, HAS_TEXT, tables(parts=8, with_text=0)]
+    html = brief.render_brief(brief.read(findings))
+
+    assert '<details class="matrix"><summary>Every profile, and why the others lost' in html
+    # and it is still the whole catalogue, not only the contenders
+    assert html.count('class="prof o-') == len(profiles.CATALOGUE)
