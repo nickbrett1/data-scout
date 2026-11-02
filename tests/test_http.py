@@ -483,6 +483,6 @@ def test_the_index_counts_the_corpus_not_the_wrapper_beside_it(server, roots):
     assert "2 files" in body
     assert "in data/" not in body
     assert "pdf 2" in body
-    assert "3 files here are not corpus" in body
+    assert "3 other files here are not corpus" in body
     assert ".gitignore, README.md, data.dvc" in body
     assert "6 files" not in body
