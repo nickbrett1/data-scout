@@ -1037,6 +1037,14 @@ body.jp-Notebook,
   font-size: 0.82rem;
 }
 
+/* The per-document table is six columns wide and carries file names, so it can
+ * exceed a phone. The wrapper scrolls; it never widens the page. */
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .brief-table {
   width: 100%;
   border-collapse: collapse;
@@ -1097,6 +1105,59 @@ body.jp-Notebook,
 .k-unknown {
   background: var(--surface-2);
   color: var(--muted);
+}
+
+/* Six columns, and file names as long as a sentence. On a phone the row becomes
+ * a card: the name on its own line, then one labelled reading per line. The
+ * table's own scroll is the fallback, so a long name can never push the page. */
+@media (max-width: 40rem) {
+  .brief-table,
+  .brief-table tbody,
+  .brief-table tr,
+  .brief-table td {
+    display: block;
+  }
+
+  .brief-table thead {
+    display: none;
+  }
+
+  .brief-table tr {
+    padding: 0.55rem 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .brief-table tr:first-child {
+    border-top: 0;
+  }
+
+  .brief-table td {
+    display: flex;
+    gap: 0.75rem;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 0.15rem 0;
+    border-top: 0;
+    text-align: left;
+  }
+
+  .brief-table td::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    color: var(--faint);
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .brief-table .brief-doc {
+    display: block;
+    margin-bottom: 0.2rem;
+    padding-left: 0;
+    font-size: 0.78rem;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
 }
 
 .brief-do ol,

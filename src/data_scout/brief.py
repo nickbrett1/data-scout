@@ -469,8 +469,12 @@ def _documents_html(
     if not corpus.documents:
         return ""
     by_name = {route.document: route for route in routes}
+    # A six-column table cannot fit a phone, and a long file name is what pushes
+    # it over. The wrapper is the guarantee — it scrolls rather than widening the
+    # page — and below 30rem the CSS turns each row into a labelled card, so the
+    # scroll is a fallback and not the reading experience.
     rows = [
-        '<table class="brief-table"><thead><tr>'
+        '<div class="table-scroll"><table class="brief-table"><thead><tr>'
         "<th>document</th><th>pages</th><th>words / page</th><th>images / page</th>"
         "<th>reads as</th><th>goes to</th>"
         "</tr></thead><tbody>"
@@ -493,14 +497,15 @@ def _documents_html(
         rows.append(
             "<tr>"
             f'<td class="brief-doc">{_escape(document.name)}</td>'
-            f"<td>{_fmt(None if document.pages is None else float(document.pages), '{:.0f}')}</td>"
-            f"<td>{density}</td>"
-            f"<td>{_fmt(document.images_per_page, '{:.1f}')}</td>"
-            f'<td><span class="brief-kind k-{document.kind}">{document.kind}</span></td>'
-            f"<td>{serves}</td>"
+            f'<td data-label="pages">{_fmt(None if document.pages is None else float(document.pages), "{:.0f}")}</td>'
+            f'<td data-label="words / page">{density}</td>'
+            f'<td data-label="images / page">{_fmt(document.images_per_page, "{:.1f}")}</td>'
+            f'<td data-label="reads as">'
+            f'<span class="brief-kind k-{document.kind}">{document.kind}</span></td>'
+            f'<td data-label="goes to">{serves}</td>'
             "</tr>"
         )
-    rows.append("</tbody></table>")
+    rows.append("</tbody></table></div>")
     return "".join(rows)
 
 

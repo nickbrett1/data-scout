@@ -185,3 +185,22 @@ def test_the_document_table_says_where_each_document_goes():
     assert "goes to" in html
     assert "literature-mining" in html
     assert "Not worth splitting" in html or "Worth splitting" in html
+
+
+def test_the_document_table_cannot_push_a_phone_page_wider():
+    """A six-column table of long file names is wider than a phone.
+
+    Two guarantees, because the second is the one a reader feels: the table sits
+    in a scroll container so it can never widen the page, and every reading
+    carries a label so the row can stack as a card below 40rem.
+    """
+    findings = [
+        line(tool="frame", value=1000, unit="files", params={"identity_files": 1}),
+        PROSE_BOOK,
+        HAS_TEXT,
+    ]
+    html = brief.render_brief(brief.read(findings))
+
+    assert '<div class="table-scroll"><table class="brief-table">' in html
+    for label in ("pages", "words / page", "images / page", "reads as", "goes to"):
+        assert f'data-label="{label}"' in html
