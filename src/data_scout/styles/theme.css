@@ -1,0 +1,116 @@
+/* data-scout's theme — the house tokens, copied, plus this app's own.
+ *
+ * The registry (github.com/nickbrett1/ui-registry, pinned in .nb-registry.json)
+ * publishes its theme as custom properties and a set of base primitives. This
+ * app is Python-rendered static HTML: it has no Svelte, so it cannot install a
+ * block — but a block *names roles*, and a stylesheet can name the same roles.
+ * That is the whole of what "adopt the design system" means here.
+ *
+ * The values above are the house palette, copied from ui-registry 1.14.0's
+ * `src/app.css`. Before this, data-scout carried its own palette that was
+ * deliberately devdash's (#161923, #3b4152, #60a5fa). devdash has since moved
+ * onto the theme, so the two apps now agree because both are reading the house
+ * values, not because one was copied from the other.
+ *
+ * This file and this file only may hold literal colour values; every other
+ * file names a role. `node scripts/check-tokens.mjs src/data_scout/styles
+ * --theme src/data_scout/styles/theme.css` is what says so.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* ground + surfaces */
+  --bg: #0f172a; /* slate-900, deepseek-balance's html/body */
+  --bg-raised: rgba(30, 41, 59, 0.55); /* .card fill */
+  --bg-sunken: rgba(15, 23, 42, 0.35); /* .chart fill */
+  --bg-hover: rgba(51, 65, 85, 0.5);
+  --bg-selected: #334155; /* .seg button.on */
+
+  /* hairlines — borders are tints, not greys */
+  --line: rgba(148, 163, 184, 0.14);
+  --line-strong: rgba(148, 163, 184, 0.25);
+
+  /* ink */
+  --ink: #e2e8f0;
+  --ink-dim: #cbd5e1;
+  --ink-muted: rgba(226, 232, 240, 0.62);
+  --ink-faint: rgba(226, 232, 240, 0.42);
+
+  /* accents */
+  --accent: #7dd3fc; /* sky-300 — the house link */
+  --accent-soft: rgba(125, 211, 252, 0.14);
+  --ok: #6ee7b7;
+  --ok-bg: rgba(52, 211, 153, 0.15);
+  --warn: #fdba74;
+  --warn-bg: rgba(251, 146, 60, 0.15);
+  --bad: #fca5a5;
+  --bad-bg: rgba(248, 113, 113, 0.18);
+  --neutral: #94a3b8;
+  --neutral-bg: rgba(148, 163, 184, 0.15);
+
+  /* search highlights: fintechnick's cream, the one warm note in the palette */
+  --mark: #fce4b8;
+  --mark-bg: rgba(252, 228, 184, 0.18);
+
+  /* On an iPhone home screen the app launches with the status bar drawn *over*
+   the page (`apple-mobile-web-app-status-bar-style: black-translucent` plus
+   `viewport-fit=cover` in app.html). `viewport-fit` is what makes these four
+   insets non-zero; a page that ignores them starts under the clock, which is
+   how "browse the blocks" ended up invisible behind the time. Any sticky
+   element must also offset its `top` by --safe-top instead of 0. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+
+  /* geometry + type */
+  /* A control's height, as a role rather than a number in each block. Desktop
+     screens want a compact 32px button; a phone wants 44px, which is not a
+     preference -- it is the smallest thing a thumb reliably hits (Apple HIG,
+     WCAG 2.5.5). data-scout already had this role in its own stylesheet
+     (--tap: 2.75rem); promoting it means a block names it and the consumer
+     decides, instead of every block hardcoding a pixel height that is wrong at
+     one end of the range. */
+  --tap: 2rem;
+  --radius: 8px;
+  --radius-sm: 6px;
+  --radius-pill: 999px;
+  --sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+/* ---- data-scout's own decisions ------------------------------------------ */
+
+:root {
+  /* A report is a document, not a dashboard: 42rem is the measure a long line
+     of prose is read at, and it is this app's number rather than the theme's. */
+  --measure: 42rem;
+
+  /* Every control here is pressed with a thumb (the same 44px the house theme
+     leaves to its consumers), and the app is read on a phone more than not. */
+  --tap: 2.75rem;
+}
+
+/* Paper. A report is printed, and a dark sheet printed on white is a wall of
+   toner — so print remaps the *roles* instead of restating every rule. The
+   system colours are the platform's own black-on-white, which is the one
+   palette a print stylesheet should be trusting. */
+@media print {
+  :root {
+    color-scheme: light;
+    --bg: Canvas;
+    --ink: CanvasText;
+    --ink-dim: color-mix(in srgb, CanvasText 78%, Canvas);
+    --ink-muted: color-mix(in srgb, CanvasText 62%, Canvas);
+    --ink-faint: color-mix(in srgb, CanvasText 45%, Canvas);
+    --line: color-mix(in srgb, CanvasText 22%, Canvas);
+    --line-strong: color-mix(in srgb, CanvasText 38%, Canvas);
+    --bg-raised: color-mix(in srgb, CanvasText 4%, Canvas);
+    --bg-sunken: color-mix(in srgb, CanvasText 6%, Canvas);
+    --bg-hover: color-mix(in srgb, CanvasText 8%, Canvas);
+    --bg-selected: color-mix(in srgb, CanvasText 12%, Canvas);
+    --mark: CanvasText;
+    --mark-bg: color-mix(in srgb, CanvasText 12%, Canvas);
+  }
+}

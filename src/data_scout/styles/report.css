@@ -1,10 +1,12 @@
-/* data-scout — one stylesheet for the whole site.
+/* data-scout — the rules that draw a report.
  *
- * The palette, the type and the shapes here are devdash's, deliberately: the
- * two apps get read on the same phone, from the same home screen, and a reader
- * should not have to work out which of them they are looking at. Dark by
- * default, because that is what devdash is; `color-scheme: dark` keeps form
- * controls and scrollbars from flashing white, and print flips to ink on paper.
+ * The palette, the type and the radii are *not* here: `theme.css` carries the
+ * house tokens (ui-registry's, plus this app's `--measure` and `--tap`) and
+ * this sheet only names them. The two apps that share this phone screen —
+ * this one and devdash — used to agree because devdash's palette had been
+ * copied; they agree now because both read the same theme. Dark by default,
+ * because a report is mostly read at night on a phone; print flips the roles
+ * to the platform's paper colours, which is set in `theme.css`.
  *
  * Applied to all three renditions: the dataset index, report-*.html (the
  * deliverable) and session-*.html (the evidence appendix). `with_chrome`
@@ -17,32 +19,10 @@
  * third — on a phone in a web app there is no browser back button to reach for.
  */
 
-:root {
-  color-scheme: dark;
-
-  --bg: #0f172a;
-  --surface: #161923;
-  --surface-2: #1f2534;
-  --border: #3b4152;
-  --fg: #e2e8f0;
-  --muted: #94a3b8;
-  --faint: #6b7280;
-
-  --accent: #60a5fa;
-  --accent-soft: #17293d;
-  --ok: #5ee08a;
-  --ok-soft: #17321f;
-  --warn: #f0c14b;
-  --warn-soft: #3a2f10;
-  --bad: #fca5a5;
-  --bad-soft: #3a1518;
-
-  --measure: 42rem;
-  --radius: 0.75rem;
-  --radius-sm: 0.5rem;
-  --tap: 2.75rem;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
+/* The palette is not here: `theme.css` carries the house tokens (and this
+   app's two additions), and it is inlined ahead of this sheet. Every rule below
+   names a role — `var(--ink)`, never `#e2e8f0` — which is what
+   `scripts/check-tokens.mjs` enforces. */
 
 * {
   box-sizing: border-box;
@@ -58,9 +38,11 @@ body {
   padding: 0 1rem calc(3rem + env(safe-area-inset-bottom));
   max-width: var(--measure);
   background: var(--bg);
-  color: var(--fg);
-  font: 400 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
-    sans-serif;
+  color: var(--ink);
+  /* 16px, not the theme's 13px: this is a document, read in long paragraphs,
+     and the house base size is tuned for a dashboard. The *family* is the
+     theme's, which is the part that has to match devdash. */
+  font: 400 16px/1.55 var(--sans);
   text-rendering: optimizeLegibility;
   overflow-wrap: break-word;
 }
@@ -79,13 +61,13 @@ body {
   padding: 0.5rem 1rem;
   padding-top: calc(0.5rem + env(safe-area-inset-top));
   background: var(--bg);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--line);
   font-size: 0.85rem;
 }
 
 @supports (backdrop-filter: blur(8px)) {
   .data-scout-nav {
-    background: rgba(15, 23, 42, 0.88);
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
     backdrop-filter: blur(8px);
   }
 }
@@ -97,10 +79,10 @@ body {
   gap: 0.35rem;
   min-height: 2.25rem;
   padding: 0.3rem 0.7rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--fg);
+  background: var(--bg-hover);
+  color: var(--ink);
   text-decoration: none;
   font-weight: 500;
 }
@@ -110,13 +92,13 @@ body {
 }
 
 .data-scout-nav .brand {
-  color: var(--faint);
+  color: var(--ink-faint);
   letter-spacing: 0.02em;
 }
 
 .data-scout-meta {
   margin: 0 0 1.2rem;
-  color: var(--muted);
+  color: var(--ink-muted);
   font-size: 0.75rem;
   line-height: 1.5;
 }
@@ -135,7 +117,7 @@ h2 {
   line-height: 1.3;
   margin: 2.2rem 0 0.6rem;
   padding-top: 1rem;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--line);
 }
 
 h3 {
@@ -149,7 +131,7 @@ p {
 }
 
 strong {
-  color: #f1f5f9;
+  color: var(--ink);
 }
 
 a {
@@ -159,12 +141,12 @@ a {
 
 hr {
   border: 0;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--line);
   margin: 1.6rem 0;
 }
 
 .muted {
-  color: var(--muted);
+  color: var(--ink-muted);
 }
 
 /* --- code and tables ---------------------------------------------------- */
@@ -172,7 +154,7 @@ hr {
 code {
   font-family: var(--mono);
   font-size: 0.86em;
-  background: var(--surface-2);
+  background: var(--bg-hover);
   border-radius: 0.28rem;
   padding: 0.1em 0.32em;
   /* A 40-character manifest must wrap inside a phone, not widen the page. */
@@ -180,8 +162,8 @@ code {
 }
 
 pre {
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   padding: 0.8rem 0.9rem;
   overflow-x: auto;
@@ -211,16 +193,16 @@ thead th {
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--muted);
+  color: var(--ink-muted);
   font-weight: 600;
   padding: 0.4rem 0.6rem;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--line);
   white-space: nowrap;
 }
 
 tbody td {
   padding: 0.4rem 0.6rem;
-  border-bottom: 1px solid var(--surface-2);
+  border-bottom: 1px solid var(--bg-hover);
   vertical-align: top;
 }
 
@@ -234,7 +216,7 @@ blockquote {
   border-left: 3px solid var(--accent);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   background: var(--accent-soft);
-  color: #cbd5e1;
+  color: var(--ink-dim);
 }
 
 blockquote p:first-child {
@@ -270,21 +252,21 @@ li {
 
 .findings-count {
   margin: 0 0 0.6rem;
-  color: var(--faint);
+  color: var(--ink-faint);
   font-size: 0.75rem;
   letter-spacing: 0.02em;
 }
 
 .finding {
   margin: 0 0 0.5rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
 }
 
 .finding[open] {
-  border-color: #4b5670;
+  border-color: var(--line-strong);
 }
 
 .finding > summary {
@@ -301,7 +283,7 @@ li {
 }
 
 .finding > summary:active {
-  background: var(--surface-2);
+  background: var(--bg-hover);
 }
 
 .f-top {
@@ -314,7 +296,7 @@ li {
 .f-no {
   font-size: 0.75rem;
   font-weight: 600;
-  color: var(--muted);
+  color: var(--ink-muted);
   font-variant-numeric: tabular-nums;
   min-width: 1.6rem;
 }
@@ -323,11 +305,11 @@ li {
   background: none;
   padding: 0;
   font-size: 0.8rem;
-  color: var(--muted);
+  color: var(--ink-muted);
 }
 
 .f-caret {
-  color: var(--faint);
+  color: var(--ink-faint);
   font-size: 0.7rem;
 }
 
@@ -350,7 +332,7 @@ li {
   font-size: 1.25rem;
   font-weight: 650;
   line-height: 1.2;
-  color: #f1f5f9;
+  color: var(--ink);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
@@ -365,7 +347,7 @@ li {
 
 .f-unit {
   font-size: 0.9rem;
-  color: var(--muted);
+  color: var(--ink-muted);
 }
 
 .f-meta {
@@ -373,7 +355,7 @@ li {
   flex-wrap: wrap;
   gap: 0.15rem 0.5rem;
   font-size: 0.78rem;
-  color: var(--muted);
+  color: var(--ink-muted);
   font-variant-numeric: tabular-nums;
 }
 
@@ -384,7 +366,7 @@ li {
   margin-top: 0.35rem;
   font-size: 0.92rem;
   line-height: 1.45;
-  color: #cbd5e1;
+  color: var(--ink-dim);
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
@@ -402,7 +384,7 @@ li {
 
 .f-body {
   padding: 0.2rem 0.9rem 1rem;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--line);
   background: var(--bg);
 }
 
@@ -415,7 +397,7 @@ li {
 }
 
 .f-facts dt {
-  color: var(--faint);
+  color: var(--ink-faint);
 }
 
 .f-facts dd {
@@ -449,7 +431,7 @@ li {
 }
 
 .finding-none {
-  color: var(--faint);
+  color: var(--ink-faint);
   font-size: 0.82rem;
   margin: 0.6rem 0 0.2rem;
 }
@@ -459,7 +441,7 @@ li {
 .report-notes {
   margin-top: 2.6rem;
   padding-top: 0.4rem;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--line);
 }
 
 .report-notes > h2:first-child {
@@ -473,8 +455,8 @@ li {
 .data-scout-toc {
   margin: 1.4rem 0;
   padding: 0.8rem 1rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
   border-radius: var(--radius);
 }
 
@@ -483,7 +465,7 @@ li {
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--faint);
+  color: var(--ink-faint);
 }
 
 .data-scout-toc ol {
@@ -495,8 +477,8 @@ li {
 /* --- the dataset index -------------------------------------------------- */
 
 .card {
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 0.85rem 0.95rem;
   margin: 0 0 0.6rem;
@@ -532,11 +514,11 @@ li {
 }
 
 .card li a:active {
-  background: var(--surface-2);
+  background: var(--bg-hover);
 }
 
 .stats {
-  color: var(--muted);
+  color: var(--ink-muted);
   font-size: 0.82rem;
   margin: 0.2rem 0;
 }
@@ -548,18 +530,18 @@ li {
   border-radius: 999px;
   font-size: 0.72rem;
   letter-spacing: 0.02em;
-  background: var(--border);
-  color: #cbd5e1;
+  background: var(--line);
+  color: var(--ink-dim);
 }
 
 .status.scouted {
-  background: var(--ok-soft);
+  background: var(--ok-bg);
   color: var(--ok);
 }
 
 .warn {
-  background: var(--warn-soft);
-  border: 1px solid #7f6d2d;
+  background: var(--warn-bg);
+  border: 1px solid color-mix(in srgb, var(--warn) 42%, transparent);
   color: var(--warn);
   padding: 0.7rem 0.85rem;
   border-radius: var(--radius-sm);
@@ -580,17 +562,17 @@ body.jp-Notebook,
 }
 
 .jp-Notebook .jp-InputArea-editor {
-  background: var(--surface);
+  background: var(--bg-raised);
 }
 
 .jp-Notebook .jp-OutputArea-output,
 .jp-Notebook .jp-RenderedHTMLCommon,
 .jp-Notebook .jp-RenderedText {
-  color: var(--fg);
+  color: var(--ink);
 }
 
 .jp-Notebook .jp-RenderedHTMLCommon table {
-  color: var(--fg);
+  color: var(--ink);
 }
 
 /* --- print: ink, not a dark rectangle ----------------------------------- */
@@ -608,7 +590,7 @@ body.jp-Notebook,
   min-height: var(--tap);
   padding: 0 0.85rem;
   background: var(--accent-soft);
-  border: 1px solid #2b4a6b;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
   border-radius: var(--radius-sm);
   color: var(--accent);
   font-weight: 600;
@@ -620,7 +602,7 @@ body.jp-Notebook,
 }
 
 .brief-headline {
-  color: var(--muted);
+  color: var(--ink-muted);
   font-size: 0.8rem;
   font-weight: 600;
   text-align: right;
@@ -642,9 +624,9 @@ body.jp-Notebook,
 
 .prof {
   margin: 0 0 0.5rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--border);
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
 }
@@ -659,11 +641,11 @@ body.jp-Notebook,
 
 .prof.o-unknown {
   border-left-color: var(--warn);
-  background: var(--surface-2);
+  background: var(--bg-hover);
 }
 
 .prof.o-disqualified {
-  border-left-color: var(--faint);
+  border-left-color: var(--ink-faint);
   opacity: 0.85;
 }
 
@@ -701,7 +683,7 @@ body.jp-Notebook,
 }
 
 .b-fits {
-  background: var(--ok-soft);
+  background: var(--ok-bg);
   color: var(--ok);
 }
 
@@ -711,20 +693,20 @@ body.jp-Notebook,
 }
 
 .b-unknown {
-  background: var(--warn-soft);
+  background: var(--warn-bg);
   color: var(--warn);
 }
 
 .b-disqualified {
-  background: var(--surface-2);
-  color: var(--muted);
+  background: var(--bg-hover);
+  color: var(--ink-muted);
 }
 
 .prof .f-caret {
   width: 0.55rem;
   height: 0.55rem;
-  border-right: 2px solid var(--faint);
-  border-bottom: 2px solid var(--faint);
+  border-right: 2px solid var(--ink-faint);
+  border-bottom: 2px solid var(--ink-faint);
   transform: rotate(45deg);
   transition: transform 0.15s ease;
 }
@@ -739,7 +721,7 @@ body.jp-Notebook,
 
 .prof-summary {
   margin: 0 0 0.7rem;
-  color: #cbd5e1;
+  color: var(--ink-dim);
   font-size: 0.88rem;
 }
 
@@ -759,7 +741,7 @@ body.jp-Notebook,
   gap: 0.1rem 0.5rem;
   align-items: baseline;
   padding: 0.3rem 0;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--line);
   font-size: 0.82rem;
 }
 
@@ -767,12 +749,12 @@ body.jp-Notebook,
   min-width: 0;
   font-family: var(--mono);
   font-size: 0.76rem;
-  color: var(--muted);
+  color: var(--ink-muted);
   overflow-wrap: anywhere;
 }
 
 .cell-observed {
-  color: var(--fg);
+  color: var(--ink);
   text-align: right;
   overflow-wrap: anywhere;
 }
@@ -795,7 +777,7 @@ body.jp-Notebook,
 
 .cell-task {
   grid-column: 2 / -1;
-  color: var(--faint);
+  color: var(--ink-faint);
   font-size: 0.74rem;
 }
 
@@ -816,14 +798,14 @@ body.jp-Notebook,
 
   .cell-observed {
     grid-column: 2;
-    color: var(--muted);
+    color: var(--ink-muted);
     text-align: left;
   }
 }
 
 .profile-label {
   margin: 0.8rem 0 0.25rem;
-  color: var(--faint);
+  color: var(--ink-faint);
   font-size: 0.7rem;
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -832,7 +814,7 @@ body.jp-Notebook,
 
 .prof-meta {
   margin: 0.8rem 0 0;
-  color: var(--faint);
+  color: var(--ink-faint);
   font-size: 0.75rem;
 }
 
@@ -844,7 +826,7 @@ body.jp-Notebook,
  * it; a reader who doubts it has the eight profiles in catalogue order. */
 .matrix > summary {
   padding: 0.7rem 0;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--line);
   color: var(--accent);
   font-size: 0.88rem;
   font-weight: 600;
@@ -858,7 +840,7 @@ body.jp-Notebook,
 
 .matrix > summary::after {
   content: " \25be";
-  color: var(--faint);
+  color: var(--ink-faint);
 }
 
 .matrix[open] > summary::after {
@@ -867,16 +849,16 @@ body.jp-Notebook,
 
 .verdict-evidence {
   margin: 0.2rem 0 0.4rem;
-  color: var(--muted);
+  color: var(--ink-muted);
   font-size: 0.9rem;
 }
 
 .verdict-routing {
   margin: 0.4rem 0;
   padding: 0.5rem 0.7rem;
-  background: var(--surface-2);
+  background: var(--bg-hover);
   border-radius: var(--radius-sm);
-  color: #cbd5e1;
+  color: var(--ink-dim);
   font-size: 0.85rem;
 }
 
@@ -893,13 +875,13 @@ body.jp-Notebook,
 /* The catalogue page (`/profiles`): the ruler, with no corpus on it. */
 .profile-intro {
   margin: 0 0 1.5rem;
-  color: #cbd5e1;
+  color: var(--ink-dim);
   font-size: 0.92rem;
 }
 
 .profile-rule {
   padding: 0.6rem 0.75rem;
-  background: var(--surface-2);
+  background: var(--bg-hover);
   border-radius: var(--radius-sm);
   font-size: 0.85rem;
 }
@@ -929,14 +911,14 @@ body.jp-Notebook,
 }
 
 .crit-gate code {
-  color: var(--fg);
+  color: var(--ink);
 }
 
 /* The profile's advice: folded away on the catalogue page, because it is about
  * how to run a use-case, not about any corpus in particular. */
 .profile-advice {
   margin: 0.6rem 0 0;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--line);
 }
 
 .profile-advice > summary {
@@ -954,7 +936,7 @@ body.jp-Notebook,
 
 .profile-advice li {
   margin: 0.3rem 0;
-  color: #cbd5e1;
+  color: var(--ink-dim);
   font-size: 0.84rem;
 }
 
@@ -964,7 +946,7 @@ body.jp-Notebook,
 
 .crit-favour code,
 .crit-partial code {
-  color: var(--muted);
+  color: var(--ink-muted);
 }
 
 /* --- the brief: a decision, not a table of readings ---------------------
@@ -980,7 +962,7 @@ body.jp-Notebook,
   margin: 1.5rem 0 2rem;
   padding: 1rem 1.1rem;
   background: var(--accent-soft);
-  border: 1px solid #2b4a6b;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
   border-radius: var(--radius);
 }
 
@@ -1001,7 +983,7 @@ body.jp-Notebook,
 
 .brief-verdict p:last-child {
   margin-bottom: 0;
-  color: #cbd5e1;
+  color: var(--ink-dim);
 }
 
 .brief-axes,
@@ -1015,20 +997,20 @@ body.jp-Notebook,
 .brief-axis {
   margin: 0 0 0.5rem;
   padding: 0.7rem 0.85rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
   border-radius: var(--radius);
   border-left: 3px solid var(--ok);
 }
 
 .brief-axis.a-open {
   border-left-color: var(--warn);
-  background: var(--surface-2);
+  background: var(--bg-hover);
 }
 
 .brief-question {
   margin: 0;
-  color: var(--muted);
+  color: var(--ink-muted);
   font-size: 0.78rem;
 }
 
@@ -1040,7 +1022,7 @@ body.jp-Notebook,
 
 .brief-implies {
   margin: 0;
-  color: #cbd5e1;
+  color: var(--ink-dim);
   font-size: 0.88rem;
 }
 
@@ -1049,7 +1031,7 @@ body.jp-Notebook,
 }
 
 .brief-cite {
-  color: var(--faint);
+  color: var(--ink-faint);
   font-family: var(--mono);
   font-size: 0.72rem;
   font-weight: 400;
@@ -1058,7 +1040,7 @@ body.jp-Notebook,
 
 /* An instrument or a gap named on the agenda: a tool, never a citation. */
 .task-tool {
-  color: var(--faint);
+  color: var(--ink-faint);
   font-family: var(--mono);
   font-size: 0.72rem;
   white-space: nowrap;
@@ -1066,7 +1048,7 @@ body.jp-Notebook,
 
 .brief-note {
   margin: -0.3rem 0 0.7rem;
-  color: var(--muted);
+  color: var(--ink-muted);
   font-size: 0.82rem;
 }
 
@@ -1086,7 +1068,7 @@ body.jp-Notebook,
 
 .brief-table th {
   padding: 0.3rem 0.4rem;
-  color: var(--faint);
+  color: var(--ink-faint);
   font-size: 0.7rem;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -1101,7 +1083,7 @@ body.jp-Notebook,
 
 .brief-table td {
   padding: 0.45rem 0.4rem;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--line);
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
@@ -1120,7 +1102,7 @@ body.jp-Notebook,
 }
 
 .k-prose {
-  background: var(--ok-soft);
+  background: var(--ok-bg);
   color: var(--ok);
 }
 
@@ -1131,13 +1113,13 @@ body.jp-Notebook,
 
 .k-sparse,
 .k-mixed {
-  background: var(--warn-soft);
+  background: var(--warn-bg);
   color: var(--warn);
 }
 
 .k-unknown {
-  background: var(--surface-2);
-  color: var(--muted);
+  background: var(--bg-hover);
+  color: var(--ink-muted);
 }
 
 /* Six columns, and file names as long as a sentence. On a phone the row becomes
@@ -1157,7 +1139,7 @@ body.jp-Notebook,
 
   .brief-table tr {
     padding: 0.55rem 0;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
   }
 
   .brief-table tr:first-child {
@@ -1177,7 +1159,7 @@ body.jp-Notebook,
   .brief-table td::before {
     content: attr(data-label);
     flex: 0 0 auto;
-    color: var(--faint);
+    color: var(--ink-faint);
     font-size: 0.68rem;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -1208,22 +1190,18 @@ body.jp-Notebook,
 .brief-not li {
   margin: 0.45rem 0;
   padding: 0.5rem 0.7rem;
-  background: var(--warn-soft);
+  background: var(--warn-bg);
   border-radius: var(--radius-sm);
-  color: #f3dfa2;
+  color: var(--mark);
   list-style: none;
   margin-left: -1.15rem;
 }
 
 @media print {
-  :root {
-    color-scheme: light;
-  }
-
+  /* theme.css remaps the palette to the platform's paper colours, so nothing
+     here names one: what is left is what paper changes about structure. */
   body {
     max-width: none;
-    background: #fff;
-    color: #111;
     font-size: 10.5pt;
   }
 
@@ -1236,7 +1214,7 @@ body.jp-Notebook,
   }
 
   .finding {
-    border-color: #ccc;
+    border-color: var(--line);
     break-inside: avoid;
   }
 
@@ -1246,15 +1224,15 @@ body.jp-Notebook,
 
   .f-value,
   strong {
-    color: #000;
+    color: var(--ink);
   }
 
   code {
-    background: #f3f3f3;
-    color: #111;
+    background: var(--bg-sunken);
+    color: var(--ink);
   }
 
   a {
-    color: #111;
+    color: var(--ink);
   }
 }

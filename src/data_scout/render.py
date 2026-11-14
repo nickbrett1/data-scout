@@ -212,9 +212,19 @@ def _strip_ansi(text: str) -> str:
 # --------------------------------------------------------------------------
 
 
+#: The house theme first, then this app's sheet. Two files rather than one
+#: because the first is a copy of what ui-registry publishes (the roles: colour,
+#: type, radii) and the second is data-scout's own rules. Concatenated here so
+#: an artifact still carries a single `<style>` block — the splice in
+#: ``with_chrome`` replaces one block, and a split sheet would leave a frozen
+#: report half-styled.
+STYLE_SHEETS = ("theme.css", "report.css")
+
+
 def stylesheet() -> str:
-    """The one CSS file, read from the package so the image and the repo agree."""
-    return (resources.files("data_scout") / "styles" / "report.css").read_text(encoding="utf-8")
+    """The CSS, read from the package so the image and the repo agree."""
+    root = resources.files("data_scout") / "styles"
+    return "\n".join((root / name).read_text(encoding="utf-8") for name in STYLE_SHEETS)
 
 
 #: The nav bar is what makes the artifact navigable on a phone: a web app has

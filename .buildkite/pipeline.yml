@@ -36,6 +36,26 @@ steps:
       - ruff check src tests
       - pytest -q
 
+  - label: ":art: Design tokens (a role, never a value)"
+    key: tokens
+    agents:
+      queue: mac-studio-linux
+    plugins:
+      - docker#v5.13.0:
+          image: "node:22-bookworm"
+          # Apple silicon fleet: without this the multi-arch tag resolves to
+          # amd64 and the whole step runs emulated.
+          platform: linux/arm64
+          workdir: /workdir
+    commands:
+      - |
+        # The house tokens are copied into src/data_scout/styles/theme.css, and
+        # every other file has to name them rather than write their values --
+        # that is what makes restyling a report a change of one file. The theme
+        # is the only file allowed a literal (ui-registry README, "A block names
+        # a role, never a value").
+        node scripts/check-tokens.mjs src/data_scout/styles --theme src/data_scout/styles/theme.css
+
   - label: ":docker: Build and publish image (GHCR)"
     key: docker_publish
     depends_on:
