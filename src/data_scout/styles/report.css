@@ -60,16 +60,15 @@ body {
   margin: 0 -1rem 1rem;
   padding: 0.5rem 1rem;
   padding-top: calc(0.5rem + env(safe-area-inset-top));
-  background: var(--bg);
+  /* 1.15.0 named this role: a ground with content scrolling under it. It was
+     two grounds here -- an opaque --bg, and a hand-mixed 88% of it behind an
+     @supports (backdrop-filter) test. The role says 93% on purpose, so there is
+     one ground for both engines; the blur is now only the polish it always was,
+     and an engine without it still reads. */
+  background: var(--bg-overlay);
+  backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--line);
   font-size: 0.85rem;
-}
-
-@supports (backdrop-filter: blur(8px)) {
-  .data-scout-nav {
-    background: color-mix(in srgb, var(--bg) 88%, transparent);
-    backdrop-filter: blur(8px);
-  }
 }
 
 /* A pill, not a text link: it is the only way off the page on a phone. */
@@ -590,7 +589,10 @@ body.jp-Notebook,
   min-height: var(--tap);
   padding: 0 0.85rem;
   background: var(--accent-soft);
-  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  /* The theme's `.btn.primary` is this shape -- accent fill, accent hairline,
+     accent ink -- and it names the hairline rather than mixing one. Same here:
+     this is the one control on a report, and it was computing 38% by hand. */
+  border: 1px solid var(--accent-line);
   border-radius: var(--radius-sm);
   color: var(--accent);
   font-weight: 600;
@@ -598,7 +600,7 @@ body.jp-Notebook,
 }
 
 .brief-link a:hover {
-  border-color: var(--accent);
+  border-color: var(--accent-line-strong);
 }
 
 .brief-headline {
