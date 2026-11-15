@@ -251,6 +251,10 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
+<!-- Opaque status bar, stated rather than inherited: the styles that let a page
+     draw under the status bar are the ones a home-screen window composites
+     over, and this nav sits at the top edge. See the same meta in __main__.py. -->
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <title>{title}</title>
 <style data-data-scout="">
 {css}

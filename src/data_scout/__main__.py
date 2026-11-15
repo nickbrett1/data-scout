@@ -191,6 +191,13 @@ def index_html(payload: dict[str, Any]) -> str:
         '<meta name="theme-color" content="#1b1d22">',
         '<meta name="apple-mobile-web-app-title" content="data-scout">',
         '<meta name="apple-mobile-web-app-capable" content="yes">',
+        # Opaque, and stated rather than inherited. The default style lets the
+        # system pick the band, and the styles that let the page draw *under* the
+        # status bar are the ones a home-screen window composites over -- which is
+        # how a nav that is already `background: var(--bg)` still looks murky.
+        # This page has no viewport-fit=cover, so nothing is at the top edge to
+        # begin with; saying `black` keeps it that way if that ever changes.
+        '<meta name="apple-mobile-web-app-status-bar-style" content="black">',
         '<meta name="color-scheme" content="dark">',
         "<title>data-scout datasets</title><style>",
         render.stylesheet(),
