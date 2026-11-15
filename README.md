@@ -331,17 +331,27 @@ are now the house ones rather than a copy of devdash's.
 Two stylesheets, inlined in this order into one `<style>` block:
 
 - `src/data_scout/styles/theme.css` — the house tokens, copied from
-  ui-registry 1.15.0 (`.nb-registry.json` records which release), plus this
+  ui-registry 1.16.0 (`.nb-registry.json` records which release), plus this
   app's two own numbers (`--measure`, `--tap`) and the `@media print` remap that
   turns the roles into the platform's paper colours.
 - `src/data_scout/styles/report.css` — every rule that draws a report. It names
   roles (`var(--ink)`, `var(--line)`) and never a value.
 
-1.15.0 added the two roles this app was already computing by hand, which is why
-the pin moved: `--bg-overlay` (a ground with content scrolling under it — the
-sticky nav was mixing 88% of `--bg` behind an `@supports`) and `--accent-line` /
-`--accent-line-strong` (the accent hairline — the brief link was mixing 38% of
-`--accent`). `--ink-strong` is copied and not yet used here.
+1.15.0 added the roles this app was already computing by hand, which is why the
+pin moved: `--bg-overlay`, `--accent-line` / `--accent-line-strong` (the accent
+hairline — the brief link was mixing 38% of `--accent`), and `--ink-strong`,
+which is copied and not yet used here.
+
+1.16.0 fixed the role 1.15.0 got wrong here. A bar that owns the top of the
+viewport cannot be glass: on iOS, in standalone PWA mode
+(`apple-mobile-web-app-status-bar-style: black-translucent` + `viewport-fit=cover`),
+the OS composites the status-bar band through whatever translucent layer sits at
+the top, so a 93% ground with `backdrop-filter: blur(8px)` over scrolling content
+read as a grey smear with the nav text on top of it. `.data-scout-nav` is now
+opaque `var(--bg)` with no blur, and it owns the status-bar band with
+`padding-top` rather than a `top:` offset — which only works because it is the
+first element in the flow. `--bg-overlay` is still in the theme, but nothing in a
+report uses it: there is no second layer for it to describe.
 
 They are concatenated rather than linked because an artifact must carry its
 whole sheet: a frozen report is restyled by splicing one `<style>` block.

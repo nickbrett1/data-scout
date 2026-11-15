@@ -60,13 +60,13 @@ body {
   margin: 0 -1rem 1rem;
   padding: 0.5rem 1rem;
   padding-top: calc(0.5rem + env(safe-area-inset-top));
-  /* 1.15.0 named this role: a ground with content scrolling under it. It was
-     two grounds here -- an opaque --bg, and a hand-mixed 88% of it behind an
-     @supports (backdrop-filter) test. The role says 93% on purpose, so there is
-     one ground for both engines; the blur is now only the polish it always was,
-     and an engine without it still reads. */
-  background: var(--bg-overlay);
-  backdrop-filter: blur(8px);
+  /* Opaque, not glass. This went to `--bg-overlay` + `backdrop-filter: blur(8px)`
+     in 1.15.0 and that was wrong for the one place this bar ever sits: iOS
+     composites the status-bar band through the translucent layer, so a report
+     scrolled under a 93% ground with a blur of itself read as a grey smear with
+     the clock on top of it. A bar that owns the top edge has nothing above it to
+     see through to. */
+  background: var(--bg);
   border-bottom: 1px solid var(--line);
   font-size: 0.85rem;
 }

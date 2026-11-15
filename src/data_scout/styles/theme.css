@@ -6,8 +6,9 @@
  * block — but a block *names roles*, and a stylesheet can name the same roles.
  * That is the whole of what "adopt the design system" means here.
  *
- * The values above are the house palette, copied from ui-registry 1.15.0's
- * `src/app.css`. Before this, data-scout carried its own palette that was
+ * The values above are the house palette, copied from ui-registry 1.16.0's
+ * `src/app.css` (byte-identical to 1.15.0 — 1.16.0 changed how a bar is
+ * painted, not what the roles are). Before this, data-scout carried its own palette that was
  * deliberately devdash's (#161923, #3b4152, #60a5fa). devdash has since moved
  * onto the theme, so the two apps now agree because both are reading the house
  * values, not because one was copied from the other.
